@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Table-为效率而生</title>
+  <link rel="stylesheet" href="Table.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- ==================== 侧边导航 ==================== -->
+    <aside class="sidebar">
+      <div class="logo">📋 <span>Table</span></div>
+      <nav>
+        <button class="nav-item active" data-page="agent">🤖 智能体<span class="nav-badge hidden" id="nav-remind-badge"></span></button>
+        <button class="nav-item" data-page="schedule">📅 课程表</button>
+        <button class="nav-item" data-page="bookmarks">🔖 收藏夹</button>
+        <button class="nav-item" data-page="tasks">✅ 待办</button>
+        <button class="nav-item" data-page="gantt">📊 规划</button>
+        <button class="nav-item" data-page="usage">💰 用量</button>
+      </nav>
+      <div class="side-foot">数据保存在本地浏览器<br />v1.0 测试版 · DeepSeek 驱动</div>
+    </aside>
+
+    <!-- ==================== 主内容区 ==================== -->
+    <main class="content">
+
+      <!-- ============ 页面：课程表 ============ -->
+      <section id="page-schedule" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>📅 大学生课程表</h1>
+            <p class="sub">当前：<b id="cur-week-label">第 — 周</b> · <span id="today-label"></span></p>
+          </div>
+          <div class="head-controls">
+            <label class="inline-field">开学第一天(上课)
+              <input id="semester-start" type="date" />
+            </label>
+            <label class="inline-field">节数
+              <select id="max-sec">
+                <option value="10">10</option>
+                <option value="11">11</option>
+                <option value="12" selected>12</option>
+                <option value="13">13</option>
+                <option value="14">14</option>
+              </select>
+            </label>
+            <button class="btn ghost" id="btn-times">⏰ 节次时间</button>
+            <div class="week-nav">
+              <button id="wk-prev" class="btn ghost" title="上一周">◀</button>
+              <select id="wk-select" title="选择周次"></select>
+              <button id="wk-next" class="btn ghost" title="下一周">▶</button>
+              <button id="btn-today" class="btn ghost">今天</button>
+            </div>
+            <div class="dropdown">
+              <button class="btn ghost" id="btn-import-menu">⬇ 导入课表 ▾</button>
+              <div class="menu hidden" id="import-menu">
+                <button data-import="html">📄 教务系统网页(HTML)导入</button>
+                <button data-import="csv">📊 CSV 模板导入</button>
+                <button data-import="paste">📋 粘贴文本导入</button>
+                <button data-import="template">⬇ 下载 CSV 模板</button>
+              </div>
+            </div>
+            <button class="btn primary" id="btn-add-course">＋ 添加课程</button>
+            <button class="btn ghost danger" id="btn-clear-courses">🗑 清空课表</button>
+          </div>
+        </div>
+
+        <div id="banner-warn" class="banner hidden">
+          ⚠️ 尚未设置「开学第一天（上课）日期」，无法计算当前周和今日课程。请在上方准确填写本学期开学第一天上课的日期（重要：填错会导致当天课程读取错误）。
+        </div>
+
+        <div class="sch-wrap">
+          <div id="schedule-grid"></div>
+        </div>
+
+        <div class="card today-panel" id="today-panel"></div>
+      </section>
+
+      <!-- ============ 页面：收藏夹 ============ -->
+      <section id="page-bookmarks" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>🔖 Edge 收藏夹</h1>
+            <p class="sub" id="bm-stats"></p>
+          </div>
+          <div class="head-controls">
+            <button class="btn ghost" id="btn-cats">🏷 分类管理</button>
+            <button class="btn primary" id="btn-bm-import">📥 一键导入 Edge 收藏夹</button>
+            <button class="btn ghost" id="btn-bm-add">＋ 手动收藏</button>
+            <button class="btn ghost" id="btn-bm-dedupe">🧹 一键去重</button>
+            <button class="btn ghost" id="btn-bm-export-edge">📤 导出 Edge(HTML)</button>
+            <button class="btn ghost" id="btn-bm-export">📤 导出备份 JSON</button>
+            <button class="btn ghost danger" id="btn-bm-clear">🗑 清空</button>
+          </div>
+        </div>
+
+        <div class="guide">
+          <b>导入方式：</b><br />
+          方式 A（推荐）：Edge 地址栏输入 <code>edge://favorites</code> → 打开收藏夹管理 → 右上角 <code>⋯</code> → <code>导出收藏夹</code>，保存 HTML 文件后选择导入。<br />
+          方式 B：直接选择本地收藏文件（无扩展名）：<code>C:\Users\你的用户名\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks</code><br />
+          <b>互通：</b>点「导出 Edge(HTML)」生成的 HTML 文件，可在 Edge <code>edge://favorites</code> → <code>⋯</code> → <code>导入收藏夹</code> 批量导入，所有分类文件夹将直接出现在 Edge <b>收藏夹栏</b>中。<br />
+          <b>说明：</b>浏览器安全策略不允许网页自动读取本地文件，首次需手动选择一次文件；重复导入会自动按网址去重。
+        </div>
+
+        <div class="bm-toolbar">
+          <input id="bm-search" class="search-input" type="search" placeholder="🔍 搜索网站名称 / 网址 / 分类名称…" />
+        </div>
+        <div class="chips" id="bm-chips"></div>
+        <div class="bm-grid" id="bm-grid"></div>
+      </section>
+
+      <!-- ============ 页面：待办 ============ -->
+      <section id="page-tasks" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>✅ 任务待办</h1>
+            <p class="sub" id="tk-stats"></p>
+          </div>
+          <div class="head-controls">
+            <button class="btn primary" id="btn-tk-add">＋ 添加任务</button>
+          </div>
+        </div>
+        <div class="tk-list" id="tk-list"></div>
+      </section>
+
+      <!-- ============ 页面：规划（甘特图） ============ -->
+      <section id="page-gantt" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>📊 未来规划 · 甘特图</h1>
+            <p class="sub" id="gt-stats"></p>
+          </div>
+          <div class="head-controls">
+            <label class="inline-field">刻度
+              <select id="gt-zoom">
+                <option value="12">12px/天</option>
+                <option value="16" selected>16px/天</option>
+                <option value="24">24px/天</option>
+                <option value="32">32px/天</option>
+                <option value="48">48px/天</option>
+              </select>
+            </label>
+            <button class="btn ghost" id="btn-gt-today">📍 今天</button>
+            <button class="btn primary" id="btn-gt-add">＋ 添加事件</button>
+          </div>
+        </div>
+        <div class="card gantt-wrap">
+          <div id="gantt-chart"></div>
+        </div>
+      </section>
+
+      <!-- ============ 页面：用量中心 ============ -->
+      <section id="page-usage" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>💰 用量中心</h1>
+            <p class="sub">DeepSeek 官方余额接口 + 本看板逐请求消耗统计（估算费用）</p>
+          </div>
+          <div class="head-controls">
+            <div class="seg" id="us-range">
+              <button class="seg-btn active" data-range="today">今日</button>
+              <button class="seg-btn" data-range="7d">近7天</button>
+              <button class="seg-btn" data-range="30d">近30天</button>
+              <button class="seg-btn" data-range="all">全部</button>
+            </div>
+          </div>
+        </div>
+        <div id="us-balance"></div>
+        <div class="us-grid">
+          <div class="card us-chart-card">
+            <div class="card-head"><h2>Token 消耗</h2><span class="card-hint" id="us-chart-hint"></span></div>
+            <div class="us-chart" id="us-chart"></div>
+          </div>
+          <div class="card us-table-card">
+            <div class="card-head"><h2>模型维度统计</h2><span class="card-hint" id="us-table-hint"></span></div>
+            <div class="table-wrap">
+              <table class="tx-table"><thead>
+                <tr><th>模型</th><th>请求数</th><th>输入·命中</th><th>输入·未命中</th><th>输出</th><th>估算费用</th></tr>
+              </thead><tbody id="us-table-body"></tbody></table>
+            </div>
+          </div>
+        </div>
+        <div class="card us-price-card">
+          <div class="card-head"><h2>单价设置（¥ / 百万 tokens · 每模型独立六项）</h2><span class="card-hint">官方调价后在此修改，费用估算立即生效；高峰时段为北京时间 9:00-12:00、14:00-18:00（其余为空闲时段）</span></div>
+          <div id="us-price-groups"></div>
+          <div class="us-price-row"><button class="btn primary" id="us-price-save">💾 保存全部单价</button></div>
+        </div>
+      </section>
+
+      <!-- ============ 页面：智能体 ============ -->
+      <section id="page-agent" class="page">
+        <div class="page-head">
+          <div>
+            <h1>🤖 网页智能体</h1>
+            <p class="sub">接入 DeepSeek API，可语音/文字指令让智能体操作本看板；对话记录自动保存，可随时新建、切换或删除</p>
+          </div>
+        </div>
+
+        <div class="agent-layout">
+          <div class="card sess-panel">
+            <button class="btn primary btn-block" id="btn-new-chat">＋ 新建对话</button>
+            <div id="sess-list"></div>
+          </div>
+          <div class="card chat-card">
+            <div class="chat-tabs">
+              <button class="chat-tab active" data-tab="chat">💬 对话</button>
+              <button class="chat-tab" data-tab="remind">⏰ 提醒<span class="red-badge hidden" id="remind-badge"></span></button>
+            </div>
+            <div class="quick-chips">
+              <button class="qchip" data-q="今天有什么课？">今天有什么课？</button>
+              <button class="qchip" data-q="查看第1周的课程表">查看第1周课程表</button>
+              <button class="qchip" data-q="打开收藏夹里的B站">打开收藏的B站</button>
+              <button class="qchip" data-q="搜索收藏夹：学习">搜索收藏：学习</button>
+              <button class="qchip" data-q="现在是第几周？">现在是第几周？</button>
+            </div>
+            <div class="chat-msgs" id="chat-msgs">
+              <div class="msg ai">你好！我是你的看板智能助手 🤖<br />我可以帮你：查看今天/某一周的课程、搜索并打开收藏网站、添加课程或收藏、给网站分类等。先在右侧配置 DeepSeek API Key，然后直接告诉我想做什么吧～</div>
+            </div>
+            <div class="remind-msgs hidden" id="remind-msgs"></div>
+            <div class="chat-inputrow">
+              <button class="btn voice-btn" id="btn-voice" title="语音输入（需 Edge/Chrome、联网和麦克风权限）">🎤</button>
+              <input id="chat-input" type="text" placeholder="例如：帮我打开收藏里的 GitHub，然后看看这周有什么课（也可点 🎤 语音输入）" />
+              <button class="btn primary" id="btn-chat-send">发送 ➤</button>
+            </div>
+          </div>
+
+          <div class="card agent-cfg">
+            <h3>⚙️ DeepSeek 接口配置</h3>
+            <label class="field">
+              <span>API Key（保存在本地浏览器）</span>
+              <input id="ag-key" type="password" placeholder="sk-…" />
+            </label>
+            <label class="field">
+              <span>接口地址（默认官方，可填代理以解决跨域）</span>
+              <input id="ag-base" type="text" placeholder="https://api.deepseek.com" />
+            </label>
+            <label class="field">
+              <span>模型</span>
+              <select id="ag-model">
+                <option value="deepseek-v4-flash">deepseek-v4-flash（V4 快速版）</option>
+                <option value="deepseek-v4-pro">deepseek-v4-pro（V4 旗舰版）</option>
+              </select>
+            </label>
+            <button class="btn primary btn-block" id="btn-ag-save">💾 保存配置</button>
+            <label class="check-row">
+              <input type="checkbox" id="ag-voicefix" checked />
+              <span>语音识别后先用 AI 校正同音字（更准确，需已配置 API Key）</span>
+            </label>
+            <p class="cfg-hint">
+              前往 <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a> 申请 API Key。<br />
+              🎤 语音输入：点麦克风说话；快捷键 <b>Alt+V</b> 开始/停止；在智能体页<b>按住空格键</b>说话，松开自动发送（需 Edge/Chrome、联网与麦克风权限）。<br />
+              若自动打开网站被浏览器拦截，请允许本页弹窗，或直接点击消息中的链接。
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ==================== 课程弹窗 ==================== -->
+  <div id="modal-course" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="c-title">添加课程</h3>
+        <button class="modal-close" data-close="modal-course">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <label class="field"><span>课程名称 *</span><input id="c-name" type="text" placeholder="如：高等数学" /></label>
+          <label class="field"><span>教师</span><input id="c-teacher" type="text" placeholder="如：张老师" /></label>
+          <label class="field"><span>教室 / 地点</span><input id="c-location" type="text" placeholder="如：教101" /></label>
+          <label class="field"><span>星期 *</span>
+            <select id="c-day">
+              <option value="1">周一</option><option value="2">周二</option><option value="3">周三</option>
+              <option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="7">周日</option>
+            </select>
+          </label>
+          <label class="field"><span>开始节次 *</span><input id="c-start" type="number" min="1" max="14" value="1" /></label>
+          <label class="field"><span>结束节次 *</span><input id="c-end" type="number" min="1" max="14" value="2" /></label>
+        </div>
+        <label class="field"><span>上课周次 *（如 1-16周、1-8周(单)、2-16周(双)、3,5,7周）</span>
+          <input id="c-weeks" type="text" placeholder="如：1-16周" /></label>
+        <label class="field"><span>备注</span><input id="c-note" type="text" maxlength="50" placeholder="可选" /></label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-course">取消</button>
+        <button class="btn ghost danger hidden" id="c-delete">删除</button>
+        <button class="btn primary" id="c-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 导入课表弹窗 ==================== -->
+  <div id="modal-import" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <h3 id="im-title">导入课表</h3>
+        <button class="modal-close" data-close="modal-import">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="im-guide"></div>
+        <div id="im-paste" class="hidden">
+          <label class="field"><span>每行一门课：课程名称|教师|教室|星期(1-7)|节次(如3-4)|周次(如1-16周)</span>
+            <textarea id="im-paste-text" rows="8" placeholder="高等数学|张老师|教101|1|1-2|1-16周&#10;大学英语|李老师|教202|3|3-4|2-16周(双)"></textarea>
+          </label>
+          <button class="btn primary" id="im-paste-ok">解析并预览</button>
+        </div>
+        <div id="im-preview" class="hidden">
+          <p class="pv-summary" id="im-summary"></p>
+          <div class="pv-wrap"><table class="pv-table"><thead>
+            <tr><th>课程名称</th><th>教师</th><th>教室</th><th>星期</th><th>节次</th><th>周次</th></tr>
+          </thead><tbody id="im-preview-body"></tbody></table></div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-import">取消</button>
+        <button class="btn primary hidden" id="im-confirm">✅ 确认导入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 节次时间设置弹窗 ==================== -->
+  <div id="modal-times" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>⏰ 节次时间设置</h3>
+        <button class="modal-close" data-close="modal-times">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="times-table" id="times-table"></div>
+        <p class="cfg-hint">填写每日各节次的开始 / 结束时间后，将显示在课表左侧节次列、今日课程和课程块悬浮提示中；某节无课可留空。</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" id="times-default">⚡ 填充默认时间</button>
+        <button class="btn ghost" data-close="modal-times">取消</button>
+        <button class="btn primary" id="times-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 分类管理弹窗 ==================== -->
+  <div id="modal-cats" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>🏷 分类管理</h3>
+        <button class="modal-close" data-close="modal-cats">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="cats-list"></div>
+        <div class="cats-add-row">
+          <input id="cat-new-name" type="text" placeholder="新分类名称" maxlength="12" />
+          <button class="btn primary" id="cat-add">＋ 添加</button>
+        </div>
+        <p class="cfg-hint">重命名分类后，该分类下的收藏会自动更新；删除分类后，其下收藏变为「未分类」。</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-cats">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 手动收藏弹窗 ==================== -->
+  <div id="modal-bm-add" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>＋ 手动收藏网站</h3>
+        <button class="modal-close" data-close="modal-bm-add">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field"><span>网站名称 *</span><input id="bma-name" type="text" maxlength="60" placeholder="如：B站" /></label>
+        <label class="field"><span>网址 *</span><input id="bma-url" type="text" placeholder="如：www.bilibili.com（可省略 https://）" /></label>
+        <label class="field"><span>分类（可选）</span><select id="bma-cat"></select></label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-bm-add">取消</button>
+        <button class="btn primary" id="bma-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 任务弹窗 ==================== -->
+  <div id="modal-task" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="tk-modal-title">添加任务</h3>
+        <button class="modal-close" data-close="modal-task">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field"><span>任务名称 *</span><input id="tk-title" type="text" maxlength="60" placeholder="如：提交实验报告" /></label>
+        <label class="field"><span>结束时间 *（截止前 1 小时会自动提醒）</span><input id="tk-due" type="datetime-local" /></label>
+        <label class="field"><span>备注（可选）</span><input id="tk-note" type="text" maxlength="100" placeholder="如：格式要求 PDF" /></label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-task">取消</button>
+        <button class="btn ghost danger hidden" id="tk-delete">删除</button>
+        <button class="btn primary" id="tk-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 规划事件弹窗 ==================== -->
+  <div id="modal-event" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="ev-modal-title">添加事件</h3>
+        <button class="modal-close" data-close="modal-event">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field"><span>事件名称 *</span><input id="ev-name" type="text" maxlength="60" placeholder="如：课程设计 / 期末复习" /></label>
+        <div class="form-grid">
+          <label class="field"><span>开始日期 *</span><input id="ev-start" type="date" /></label>
+          <label class="field"><span>结束日期 *</span><input id="ev-end" type="date" /></label>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-event">取消</button>
+        <button class="btn ghost danger hidden" id="ev-delete">删除</button>
+        <button class="btn primary" id="ev-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- 隐藏文件输入 -->
+  <input type="file" id="file-import" class="hidden" />
+  <input type="file" id="file-bm" class="hidden" />
+
+  <script src="Table.js"></script>
+</body>
+</html>
