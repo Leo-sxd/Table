@@ -3413,7 +3413,7 @@ const TOOLS = [
   { type: 'function', function: { name: 'multi_save_group', description: '把当前多开器分屏保存为网址组', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'multi_load_group', description: '加载已保存的网址组', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'multi_expand', description: '将某一屏放大占据整个多开器工作区（index 1-4）', parameters: { type: 'object', properties: { index: { type: 'number' } }, required: ['index'] } } },
-  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map', 'multi'] } }, required: ['page'] } } },
+  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['agent', 'usage', 'schedule', 'bookmarks', 'tasks', 'gantt', 'map', 'multi'] } }, required: ['page'] } } },
   { type: 'function', function: { name: 'get_settings', description: '获取看板设置（开学日期、节数等）', parameters: { type: 'object', properties: {} } } },
 ];
 const TOOL_LABELS = {
@@ -3635,7 +3635,7 @@ async function executeTool(name, args) {
     }
     case 'show_page': {
       const page = args && args.page;
-      if (['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map', 'multi'].includes(page)) { switchPage(page); return { ok: true, page }; }
+      if (['agent', 'usage', 'schedule', 'bookmarks', 'tasks', 'gantt', 'map', 'multi'].includes(page)) { switchPage(page); return { ok: true, page }; }
       return { error: '无效页面' };
     }
     case 'map_locate': {
@@ -4077,12 +4077,12 @@ function buildSystemPrompt() {
   const wi = weekInfo();
   const wkTxt = wi.week ? `当前是第${wi.week}周` : '开学日期尚未设置（当前周未知，涉及周次的查询要提醒用户先设置开学第一天上课日期）';
   return `你是「Table」看板的智能助手，运行在用户的本地网页里。你可以用工具直接操作系统，覆盖网页内的所有页面与功能：
+【智能体页】清空对话；启动语音输入(start_voice)。
+【用量中心】查询本看板 DeepSeek 消耗统计与官方账户余额（get_usage/refresh_balance；费用为估算值，单价可在用量中心页调整）。
 【课程表页】查询当前周/今日课程/某一周课程；跳转查看某周课表(view_week)；添加/编辑/删除课程；清空课表；打开课表导入向导(教务系统HTML/CSV/粘贴)；设置开学日期(影响当前周计算，须用户确认准确)；设置某一节次时间或填充默认节次时间。
 【收藏夹页】搜索/打开/添加/删除/重命名收藏网站；单个或按关键词/分类批量打开网站（open_bookmark/open_bookmarks，自动打开被拦截时引导用户点聊天内按钮）；给网站设置分类；新建/重命名/删除分类；一键去重重复网址；按分类或关键词筛选显示；触发 Edge 收藏文件导入；导出 Edge 可导入的 HTML 文件。
-【智能体页】清空对话；启动语音输入(start_voice)。
 【待办页】查询/添加/完成/删除待办任务（按截止时间优先度排序；截止前1小时会自动通过「提醒」栏目提醒用户，红色圆圈角标提示新提醒）。
 【规划页】查询/添加/编辑/删除未来规划事件（甘特图显示，任务名称-开始日期-结束日期；日期格式 YYYY-MM-DD）。
-【用量中心】查询本看板 DeepSeek 消耗统计与官方账户余额（get_usage/refresh_balance；费用为估算值，单价可在用量中心页调整）。
 【地图页】定位当前城市（map_locate，高德IP定位）；搜索地点（map_search，POI搜索）；地址转经纬度（map_geocode，地理编码）；路径规划（map_route，驾车/步行/骑行/地铁/混合）；开启测距（map_ranging）；电子围栏管理（list_fences/locate_fence/delete_fence/start_fence_draw）；切换全屏（map_fullscreen）。需用户已在地图页「⚙️ Key 配置」填写高德 Key 并通过测试，否则提醒用户先配置。
 【多开器】同时打开多个网址分屏显示（multi_open，urls 1-4 个，layout 1/2/4）；查看分屏状态与网址组（multi_list）；保存当前分屏为网址组（multi_save_group）；加载网址组（multi_load_group）；将某一屏放大独占工作区（multi_expand，index 1-4）。注意：部分网站通过 X-Frame-Options/CSP 禁止被内嵌，iframe 会显示空白或拒绝连接，这是网站自身限制。
 【通用】切换页面(show_page)；读取看板设置与统计(get_settings)。
@@ -4384,7 +4384,7 @@ async function sendVoiceText(text) {
 /* ==================== 页面切换 ==================== */
 function switchPage(page) {
   $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map', 'multi'].forEach(p => {
+  ['agent', 'usage', 'schedule', 'bookmarks', 'tasks', 'gantt', 'map', 'multi'].forEach(p => {
     $('#page-' + p).classList.toggle('hidden', p !== page);
   });
   if (page === 'bookmarks') renderBookmarks();
