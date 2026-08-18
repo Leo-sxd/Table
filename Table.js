@@ -70,6 +70,8 @@ const LS = {
   events: 'td_events_v1',
   usage: 'td_usage_v1',
   balance: 'td_balance_v1',
+  map: 'td_map_v1',
+  fences: 'td_fences_v1',
 };
 function load(key, def) {
   try {
@@ -92,6 +94,8 @@ let events = load(LS.events, []);       // 规划事件 [{id,name,start,end,colo
 let usageStats = load(LS.usage, { byDay: {} }); // 本地用量统计 { byDay: { 'YYYY-MM-DD': {requests,promptTokens,completionTokens,totalTokens,hours,models} } }
 let balance = load(LS.balance, null);   // 官方余额快照 {ok,total,granted,topped,currency,time} 或 {ok:false,error}
 let usRange = 'today';                  // 用量中心当前范围 today/7d/30d/all
+let mapCfg = load(LS.map, { key: '', securityCode: '' }); // 高德地图配置（用户手动填写）
+let fences = load(LS.fences, []);        // 电子围栏 [{id,name,type:polygon|circle,polygon:{path},circle:{center,radius},createdAt,updatedAt}]
 
 /* ==================== 周次计算 ==================== */
 function weekInfo() {
@@ -2190,6 +2194,967 @@ function renderUsage() {
   renderUsPrices();
 }
 
+/* ==================== 高德地图 ==================== */
+let amapMap = null;      // AMap 地图实例
+let amapMarkers = [];    // 当前标记集合
+let amapInfoWindow = null; // 信息窗体
+let amapCurrentPois = [];  // 当前搜索结果
+let amapHighlight = null;  // 建筑位置高亮框（虚线+淡蓝透明）
+let amapFenceOverlays = []; // 围栏地图覆盖物
+let amapFenceFlags = [];     // 围栏定位标志（🚩）
+let mouseToolInstance = null; // 围栏绘制工具
+let editingFenceId = null;    // 重绘的围栏 id（空=新建）
+let fenceDraftName = '';      // 绘制中的围栏名
+let fenceDrawType = 'polygon'; // 当前绘制形状
+let fenceCircleMode = 'drag';  // 圆形围栏半径设定方式 drag/input
+let centerPickHandler = null;  // 点选圆心的地图点击监听
+let pickConstraintFenceId = null; // 选点绘制：约束用旧围栏 id
+let pickedFencePoints = [];    // 选点绘制：已选点集合
+let pickFenceHandler = null;   // 选点绘制：地图点击监听
+let fencesInteractive = true;  // 旧围栏覆盖物是否可点击（绘制模式下关闭，让点击穿透到地图）
+let rangingToolInstance = null; // 测距工具实例
+let rangingActive = false;      // 测距是否激活
+let amapRouteOverlays = [];     // 路径规划覆盖物（起终点标注）
+let amapRouteLines = [];        // 路线折线（与标注分开，便于切换主方案样式）
+let plannedRoutes = [];         // 当前规划的全部方案
+let plannedMainIdx = 0;         // 当前主方案索引
+let lastRouteMeta = null;       // 最近一次规划元信息 {modeName,oName,dName}
+let routeOriginSel = null;      // 已选起点 {lng,lat,name,address}
+let routeDestSel = null;        // 已选终点
+let routePickStage = null;      // 选点阶段 'origin' | 'dest' | null（对照地图选点）
+
+function updateMapStatus(text) {
+  const el = $('#map-status');
+  if (el) el.textContent = text;
+}
+/* 高德 Web服务 API 通用请求（CORS 受限时给出提示） */
+async function amapGet(path, params, version = 'v3') {
+  if (!mapCfg.key) return { error: '未配置高德 API Key，请先在地图页「⚙️ Key 配置」填写并测试' };
+  const qs = new URLSearchParams(Object.assign({ key: mapCfg.key }, params)).toString();
+  let resp;
+  try {
+    resp = await fetch('https://restapi.amap.com/' + version + '/' + path + '?' + qs);
+  } catch (e) {
+    return { error: '网络请求失败：' + (e.message || e) + '。若为跨域(CORS)问题，请通过 HTTPS（GitHub Pages）访问本页' };
+  }
+  try { return await resp.json(); } catch (e) { return { error: '响应解析失败 HTTP ' + resp.status }; }
+}
+/* 加载 JS API 2.0（需 Key + 安全密钥；_AMapSecurityConfig 必须在脚本前设置） */
+function loadAMap() {
+  return new Promise((resolve, reject) => {
+    if (window.AMap) { resolve(window.AMap); return; }
+    if (!mapCfg.key) { reject(new Error('未配置 API Key')); return; }
+    window._AMapSecurityConfig = { securityJsCode: mapCfg.securityCode || '' };
+    const s = document.createElement('script');
+    s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + encodeURIComponent(mapCfg.key) + '&plugin=AMap.Geolocation,AMap.PlaceSearch';
+    s.onload = () => resolve(window.AMap);
+    s.onerror = () => reject(new Error('JS SDK 加载失败，请检查 Key 与安全密钥是否匹配'));
+    document.head.appendChild(s);
+  });
+}
+/* 确保地图实例就绪（供页面与 Agent 共用） */
+async function ensureMapReady() {
+  if (!mapCfg.key) throw new Error('未配置 API Key');
+  await loadAMap();
+  if (!amapMap) {
+    const el = $('#map-container');
+    el.innerHTML = '';
+    amapMap = new AMap.Map(el, { center: [108.939621, 34.343147], zoom: 4, viewMode: '2D' });
+  }
+  return amapMap;
+}
+function renderMapEmpty(text) {
+  const el = $('#map-container');
+  el.innerHTML = `<div class="map-empty">${esc(text)}<br /><button class="btn primary" data-act="config" style="margin-top:10px">⚙️ 配置 Key</button></div>`;
+}
+function clearMarkers() {
+  if (!amapMap) return;
+  amapMarkers.forEach(m => amapMap.remove(m));
+  amapMarkers = [];
+  if (amapInfoWindow) amapInfoWindow.close();
+  clearHighlight();
+  clearRoute();
+}
+/* 建筑位置高亮框：虚线描边 + 淡蓝半透明填充（约150米见方近似轮廓） */
+function clearHighlight() {
+  if (amapHighlight && amapMap) {
+    try { amapMap.remove(amapHighlight); } catch (e) { /* 忽略 */ }
+    amapHighlight = null;
+  }
+}
+function highlightArea(lnglat, sizeDeg) {
+  if (!amapMap) return;
+  clearHighlight();
+  const [lng, lat] = lnglat;
+  const d = (sizeDeg || 0.0016) / 2; // 0.0016° ≈ 150 米
+  const path = [
+    [lng - d, lat - d], [lng + d, lat - d], [lng + d, lat + d], [lng - d, lat + d],
+  ];
+  amapHighlight = new AMap.Polygon({
+    path,
+    strokeColor: '#4f6ef7',
+    strokeWeight: 2,
+    strokeStyle: 'dashed',
+    strokeOpacity: 0.95,
+    fillColor: '#4f6ef7',
+    fillOpacity: 0.12,
+    zIndex: 110,
+  });
+  amapMap.add(amapHighlight);
+}
+
+/* ==================== 电子围栏 ==================== */
+function centerOfPath(path) {
+  if (!path || !path.length) return null;
+  const n = path.length;
+  const s = path.reduce((a, p) => [a[0] + p[0], a[1] + p[1]], [0, 0]);
+  return [s[0] / n, s[1] / n];
+}
+/* ==================== 嵌套围栏辅助（点在圆/多边形内判断） ==================== */
+function metersBetween(a, b) {
+  const R = 6371000;
+  const dLat = (b[1] - a[1]) * Math.PI / 180;
+  const dLng = (b[0] - a[0]) * Math.PI / 180;
+  const la1 = a[1] * Math.PI / 180, la2 = b[1] * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function pointInPolygon(p, path) {
+  let inside = false;
+  for (let i = 0, j = path.length - 1; i < path.length; j = i++) {
+    const xi = path[i][0], yi = path[i][1], xj = path[j][0], yj = path[j][1];
+    if (((yi > p[1]) !== (yj > p[1])) && (p[0] < (xj - xi) * (p[1] - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+/* 判断点是否在某围栏内（旧围栏作为新围栏选点的约束区域） */
+function pointInsideFence(fence, p) {
+  if (!fence) return true;
+  if (fence.type === 'circle') {
+    return metersBetween(p, fence.circle.center) <= fence.circle.radius;
+  }
+  if (fence.polygon && fence.polygon.path.length >= 3) {
+    return pointInPolygon(p, fence.polygon.path);
+  }
+  return true;
+}
+/* 绘制模式下关闭旧围栏点击，让点击穿透到地图；结束后恢复 */
+function setFencesInteractive(on) {
+  fencesInteractive = on;
+  renderFences();
+}
+/* 地图上渲染全部围栏（橙色虚线 + 半透明填充） */
+function renderFences() {
+  if (!amapMap) { renderFenceList(); return; }
+  amapFenceOverlays.forEach(o => { try { amapMap.remove(o); } catch (e) { /* 忽略 */ } });
+  amapFenceOverlays = [];
+  amapFenceFlags.forEach(o => { try { amapMap.remove(o); } catch (e) { /* 忽略 */ } });
+  amapFenceFlags = [];
+  const style = {
+    strokeColor: '#f59e0b', strokeWeight: 2, strokeStyle: 'dashed', strokeOpacity: 0.95,
+    fillColor: '#f59e0b', fillOpacity: 0.14, zIndex: 105,
+    clickable: fencesInteractive, // 绘制模式关闭点击，避免吞掉地图点击
+  };
+  fences.forEach(f => {
+    let o;
+    if (f.type === 'circle') {
+      o = new AMap.Circle(Object.assign({ center: f.circle.center, radius: f.circle.radius }, style));
+    } else if (f.polygon && f.polygon.path && f.polygon.path.length >= 3) {
+      o = new AMap.Polygon(Object.assign({ path: f.polygon.path }, style));
+    }
+    if (o) {
+      const center = f.type === 'circle' ? f.circle.center : centerOfPath(f.polygon.path);
+      // 始终绑定点击：绘制模式下强制转发给选点/圆心逻辑（保证旧围栏内可点击），否则弹信息窗
+      o.on('click', e => {
+        if (pickFenceHandler) { pickFenceHandler(e); return; }
+        if (centerPickHandler) { centerPickHandler(e); return; }
+        if (fencesInteractive) {
+          showInfo('<b>⛓️ ' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形电子围栏' : '多边形电子围栏'), center);
+        }
+      });
+      amapMap.add(o);
+      amapFenceOverlays.push(o);
+    }
+  });
+  renderFenceList();
+}
+function renderFenceList() {
+  const box = $('#fence-list');
+  const count = $('#fence-count');
+  if (!box) return;
+  if (count) count.textContent = fences.length ? `共 ${fences.length} 个电子围栏` : '';
+  if (!fences.length) {
+    box.innerHTML = '<div class="tp-empty">暂无电子围栏<br>点击顶部「⛓️ 电子围栏」按钮在地图上绘制</div>';
+    return;
+  }
+  box.innerHTML = fences.map(f => `<div class="fence-item" data-id="${f.id}">
+    <div class="fence-icon">${f.type === 'circle' ? '◯' : '⬠'}</div>
+    <div class="fence-info">
+      <div class="fence-name">${esc(f.name)}</div>
+      <div class="fence-meta">${f.type === 'circle' ? '圆形 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形 · ' + (f.polygon ? f.polygon.path.length : 0) + ' 个顶点'}</div>
+    </div>
+    <div class="fence-ops">
+      <button title="定位" data-act="locate">📍</button>
+      <button title="改名" data-act="rename">✏️</button>
+      <button title="重绘" data-act="redraw">🔄</button>
+      <button title="删除" class="danger" data-act="del">🗑</button>
+    </div>
+  </div>`).join('');
+}
+function openFenceModal() {
+  if (!mapCfg.key) { toast('请先配置高德 Key', 'warn'); openMapConfigModal(); return; }
+  $('#fence-modal-title').textContent = '⛓️ 新建电子围栏';
+  $('#fence-name').value = '';
+  $('#fence-radius').value = 200;
+  $('#fence-draw-mode').value = 'free';
+  fenceCircleMode = 'drag';
+  // 约束围栏下拉（选点绘制模式用）
+  const sel = $('#fence-constraint');
+  sel.innerHTML = fences.length
+    ? fences.map(f => `<option value="${f.id}">${esc(f.name)}（${f.type === 'circle' ? '圆形' : '多边形'}）</option>`).join('')
+    : '<option value="">暂无旧围栏</option>';
+  $$('.fence-type-card').forEach(x => x.classList.toggle('active', x.dataset.type === 'polygon'));
+  $$('#fence-circle-mode .seg-btn').forEach(x => x.classList.toggle('active', x.dataset.mode === 'drag'));
+  $('#fence-radius-group').classList.add('hidden');
+  $('#fence-pick-group').classList.remove('hidden');
+  // 同步把右侧面板切到围栏标签，保存后立即可见
+  const tabBtn = document.querySelector('#map-side-tabs [data-tab="fences"]');
+  if (tabBtn) tabBtn.click();
+  $('#modal-fence').classList.remove('hidden');
+  $('#fence-name').focus();
+}
+/* 输入半径模式：地图单击选择圆心，按输入半径生成圆形围栏 */
+async function startCenterPick(name, radius) {
+  try {
+    await ensureMapReady();
+    setFencesInteractive(false); // 旧围栏不可点击，让点击穿透到地图
+    showDrawBanner(`⛓️ 请在地图上单击选择圆心位置（半径 ${radius} 米）`, false);
+    let lastPickTs = 0;
+    centerPickHandler = e => {
+      if (!e || !e.lnglat) return;
+      const now = Date.now();
+      if (now - lastPickTs < 300) return; // 防重复触发（覆盖物转发+地图点击双路径）
+      lastPickTs = now;
+      amapMap.off('click', centerPickHandler);
+      centerPickHandler = null;
+      hideDrawBanner();
+      if (!fencesInteractive) setFencesInteractive(true); // 恢复旧围栏点击
+      const center = [e.lnglat.getLng(), e.lnglat.getLat()];
+      const fence = { id: editingFenceId || uid(), name, type: 'circle', circle: { center, radius }, createdAt: Date.now(), updatedAt: Date.now() };
+      if (editingFenceId) {
+        const idx = fences.findIndex(x => x.id === editingFenceId);
+        if (idx >= 0) { fence.createdAt = fences[idx].createdAt; fences[idx] = fence; }
+        editingFenceId = null;
+        toast(`围栏「${fence.name}」已重绘保存`);
+      } else {
+        fences.push(fence);
+        toast(`电子围栏「${fence.name}」已保存`);
+      }
+      save(LS.fences, fences);
+      renderFences();
+      updateMapStatus(`圆形围栏已保存（圆心点选，半径 ${radius} 米）`);
+    };
+    amapMap.on('click', centerPickHandler);
+  } catch (err) {
+    toast('启动圆心选择失败：' + (err.message || err), 'err');
+  }
+}
+/* 选点绘制模式：在旧围栏内点选多个点作为新围栏顶点（新旧围栏相互独立） */
+function showDrawBanner(text, showDone) {
+  const banner = $('#map-draw-banner');
+  if (banner) {
+    banner.classList.remove('hidden');
+    $('#map-draw-text').textContent = text;
+    $('#map-draw-done').classList.toggle('hidden', !showDone);
+  }
+}
+function hideDrawBanner() {
+  const banner = $('#map-draw-banner');
+  if (banner) banner.classList.add('hidden');
+  $('#map-draw-done').classList.add('hidden');
+}
+async function startFencePointPick(name, fid) {
+  try {
+    await ensureMapReady();
+    setFencesInteractive(false); // 旧围栏不可点击，让点击穿透到地图
+    const cf = fences.find(x => x.id === fid);
+    if (!cf) return toast('约束围栏不存在，请重新选择', 'warn');
+    pickConstraintFenceId = fid;
+    pickedFencePoints = [];
+    zoomToFence(cf); // 定位到约束围栏，便于对照选点
+    showDrawBanner(`🎯 请在「${cf.name}」内依次单击选择点（≥3 个），点「✅ 完成」生成围栏`, true);
+    let lastPickTs = 0;
+    pickFenceHandler = e => {
+      if (!e || !e.lnglat) return;
+      const now = Date.now();
+      if (now - lastPickTs < 300) return; // 防重复触发（覆盖物转发+地图点击双路径）
+      lastPickTs = now;
+      const p = [e.lnglat.getLng(), e.lnglat.getLat()];
+      if (!pointInsideFence(cf, p)) {
+        toast('该点不在约束围栏内，已忽略', 'warn');
+        return;
+      }
+      pickedFencePoints.push(p);
+      const dot = new AMap.Marker({
+        position: p,
+        content: '<div style="width:10px;height:10px;border-radius:50%;background:#f59e0b;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>',
+        offset: new AMap.Pixel(-5, -5),
+        zIndex: 130,
+      });
+      amapMap.add(dot);
+      amapFenceFlags.push(dot);
+      $('#map-draw-text').textContent = `🎯 已选 ${pickedFencePoints.length} 个点，继续单击或点「✅ 完成」`;
+    };
+    amapMap.on('click', pickFenceHandler);
+  } catch (err) {
+    toast('启动选点绘制失败：' + (err.message || err), 'err');
+  }
+}
+function finishFencePointPick() {
+  if (!pickFenceHandler) return;
+  amapMap.off('click', pickFenceHandler);
+  pickFenceHandler = null;
+  hideDrawBanner();
+  if (!fencesInteractive) setFencesInteractive(true); // 恢复旧围栏点击
+  if (pickedFencePoints.length < 3) {
+    toast('至少需要 3 个点才能构成围栏', 'warn');
+    updateMapStatus('选点不足（<3），请重新绘制');
+    return;
+  }
+  const fence = {
+    id: editingFenceId || uid(),
+    name: fenceDraftName,
+    type: 'polygon',
+    polygon: { path: pickedFencePoints },
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  if (editingFenceId) {
+    const idx = fences.findIndex(x => x.id === editingFenceId);
+    if (idx >= 0) { fence.createdAt = fences[idx].createdAt; fences[idx] = fence; }
+    editingFenceId = null;
+    toast(`围栏「${fence.name}」已重绘保存`);
+  } else {
+    fences.push(fence);
+    toast(`电子围栏「${fence.name}」已保存（${pickedFencePoints.length} 个点）`);
+  }
+  save(LS.fences, fences);
+  renderFences();
+  updateMapStatus('选点围栏已保存，新旧围栏相互独立');
+}
+function ensureMouseTool() {
+  return new Promise((resolve, reject) => {
+    if (!window.AMap) return reject(new Error('地图未就绪'));
+    AMap.plugin(['AMap.MouseTool'], () => resolve(AMap.MouseTool));
+  });
+}
+function closeMouseTool() {
+  if (mouseToolInstance) {
+    try { mouseToolInstance.close(true); } catch (e) { /* 忽略 */ }
+    mouseToolInstance = null;
+  }
+  hideDrawBanner();
+  if (!fencesInteractive) setFencesInteractive(true); // 恢复旧围栏点击
+}
+async function startFenceDraw(type, name) {
+  try {
+    await ensureMapReady();
+    setFencesInteractive(false); // 旧围栏不可点击，让点击穿透到地图
+    const MouseTool = await ensureMouseTool();
+    closeMouseTool();
+    mouseToolInstance = new MouseTool(amapMap);
+    fenceDrawType = type;
+    fenceDraftName = name || '电子围栏';
+    const style = {
+      strokeColor: '#f59e0b', strokeWeight: 2, strokeStyle: 'dashed', strokeOpacity: 0.95,
+      fillColor: '#f59e0b', fillOpacity: 0.14,
+    };
+    if (type === 'polygon') mouseToolInstance.polygon(style);
+    else mouseToolInstance.circle(style);
+    mouseToolInstance.on('draw', onFenceDrawn);
+    // 顶部绘制提示浮条（无完成按钮）
+    showDrawBanner(type === 'polygon'
+      ? '⛓️ 正在绘制多边形围栏：单击添加顶点，双击结束'
+      : '⛓️ 正在绘制圆形围栏：单击定圆心，拖动定半径', false);
+    updateMapStatus('围栏绘制中，见地图顶部提示');
+  } catch (err) {
+    toast('启动绘制失败：' + (err.message || err), 'err');
+  }
+}
+function onFenceDrawn(e) {
+  const obj = e.obj;
+  closeMouseTool();
+  let fence = null;
+  if (fenceDrawType === 'polygon') {
+    const path = obj.getPath && obj.getPath();
+    if (path && path.length >= 3) {
+      fence = { id: editingFenceId || uid(), name: fenceDraftName, type: 'polygon', polygon: { path: path.map(p => [p.lng, p.lat]) }, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+  } else {
+    const center = obj.getCenter && obj.getCenter();
+    const radius = obj.getRadius && obj.getRadius();
+    if (center && radius) {
+      fence = { id: editingFenceId || uid(), name: fenceDraftName, type: 'circle', circle: { center: [center.lng, center.lat], radius }, createdAt: Date.now(), updatedAt: Date.now() };
+    }
+  }
+  if (!fence) { updateMapStatus('围栏绘制无效，请重试'); return; }
+  if (editingFenceId) {
+    const idx = fences.findIndex(x => x.id === editingFenceId);
+    if (idx >= 0) { fence.createdAt = fences[idx].createdAt; fences[idx] = fence; }
+    editingFenceId = null;
+    toast(`围栏「${fence.name}」已重绘保存`);
+  } else {
+    fences.push(fence);
+    toast(`电子围栏「${fence.name}」已保存`);
+  }
+  save(LS.fences, fences);
+  renderFences();
+  updateMapStatus('围栏已保存，可在右侧「⛓️ 围栏」面板管理');
+}
+function zoomToFence(f) {
+  if (!amapMap || !f) return;
+  const center = f.type === 'circle' ? f.circle.center : centerOfPath(f.polygon && f.polygon.path);
+  // 清除旧标志
+  amapFenceFlags.forEach(o => { try { amapMap.remove(o); } catch (e) { /* 忽略 */ } });
+  amapFenceFlags = [];
+  // 第一步：居中缩放（动画）
+  if (f.type === 'circle') {
+    amapMap.setZoomAndCenter(15, f.circle.center);
+  } else if (f.polygon && f.polygon.path.length) {
+    try {
+      amapMap.setFitView(f.polygon.path.map(p => new AMap.LngLat(p[0], p[1])));
+    } catch (e) {
+      amapMap.setZoomAndCenter(15, center);
+    }
+  }
+  if (!center) return;
+  // 第二步：动画结束后（moveend）再生成 🚩 标志并弹信息窗；兜底定时器防止地图未移动不触发事件
+  let settled = false;
+  const done = () => {
+    if (settled) return;
+    settled = true;
+    try { amapMap.off('moveend', done); } catch (e) { /* 忽略 */ }
+    const flag = makeLabelMarker(center, '🚩', f.name, '#10b981');
+    flag.on('click', () => showInfo('<b>⛓️ ' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形围栏 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形围栏 · ' + f.polygon.path.length + ' 个顶点'), center));
+    amapMap.add(flag);
+    amapFenceFlags.push(flag);
+    showInfo('<b>⛓️ ' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形围栏 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形围栏 · ' + f.polygon.path.length + ' 个顶点'), center);
+  };
+  amapMap.on('moveend', done);
+  setTimeout(done, 900);
+}
+
+/* ==================== 测距与路径规划 ==================== */
+function ensureRangingTool() {
+  return new Promise((resolve, reject) => {
+    if (!window.AMap) return reject(new Error('地图未就绪'));
+    AMap.plugin(['AMap.RangingTool'], () => resolve(AMap.RangingTool));
+  });
+}
+function stopRanging() {
+  if (rangingToolInstance) {
+    try { rangingToolInstance.turnOff(); } catch (e) { /* 忽略 */ }
+    rangingToolInstance = null;
+  }
+  rangingActive = false;
+  const b = $('#btn-map-ruler');
+  if (b) { b.classList.remove('toggle-on'); b.textContent = '📏 测距'; }
+}
+async function toggleRanging() {
+  if (!mapCfg.key) { toast('请先配置 Key', 'warn'); openMapConfigModal(); return; }
+  try {
+    await ensureMapReady();
+    if (!rangingActive) {
+      const RangingTool = await ensureRangingTool();
+      rangingToolInstance = new RangingTool(amapMap, { lineOptions: { strokeColor: '#f59e0b', strokeWeight: 4 } });
+      rangingToolInstance.turnOn();
+      rangingActive = true;
+      const b = $('#btn-map-ruler');
+      b.classList.add('toggle-on');
+      b.textContent = '📏 测距中…';
+      updateMapStatus('测距中：单击添加测距点，双击结束');
+    } else {
+      stopRanging();
+      updateMapStatus('测距已结束');
+    }
+  } catch (err) {
+    toast('测距启动失败：' + (err.message || err), 'err');
+  }
+}
+function clearRoute() {
+  if (!amapMap) { amapRouteOverlays = []; amapRouteLines = []; return; }
+  amapRouteOverlays.forEach(o => { try { amapMap.remove(o); } catch (e) { /* 忽略 */ } });
+  amapRouteOverlays = [];
+  amapRouteLines.forEach(o => { try { amapMap.remove(o); } catch (e) { /* 忽略 */ } });
+  amapRouteLines = [];
+}
+/* 绘制全部方案：主方案蓝色实线，备选淡蓝虚线；点击备选可切换主方案 */
+function drawPlannedRoutes(mainIdx) {
+  if (!amapMap) return;
+  amapRouteLines.forEach(o => { try { amapMap.remove(o); } catch (e) { /* 忽略 */ } });
+  amapRouteLines = [];
+  plannedMainIdx = mainIdx;
+  plannedRoutes.forEach((rt, i) => {
+    const isMain = i === mainIdx;
+    const line = new AMap.Polyline({
+      path: rt.points,
+      strokeColor: isMain ? '#1989fa' : '#93c5fd',
+      strokeWeight: isMain ? 6 : 4,
+      strokeStyle: isMain ? 'solid' : 'dashed',
+      strokeOpacity: isMain ? 0.95 : 0.55,
+      lineJoin: 'round',
+      zIndex: isMain ? 101 : 100,
+    });
+    amapMap.add(line);
+    amapRouteLines.push(line);
+  });
+  const main = plannedRoutes[mainIdx];
+  if (main && main.points.length) {
+    try { amapMap.setFitView(main.points.map(p => new AMap.LngLat(p[0], p[1]))); } catch (e) { /* 忽略 */ }
+  }
+}
+function rerenderRouteSummary() {
+  if (lastRouteMeta && plannedRoutes.length) {
+    renderRouteSummary(lastRouteMeta.modeName, lastRouteMeta.oName, lastRouteMeta.dName, plannedRoutes);
+  }
+}
+function renderRouteSummary(modeName, oName, dName, routes) {
+  $('#map-side-hint').textContent = '路径规划结果（点击方案可切换主路线）';
+  const tabBtn = document.querySelector('#map-side-tabs [data-tab="results"]');
+  if (tabBtn) tabBtn.click();
+  const box = $('#map-results');
+  const note = lastRouteMeta && lastRouteMeta.note ? `<div class="route-summary route-alt">ℹ️ ${esc(lastRouteMeta.note)}</div>` : '';
+  let alt = 0;
+  box.innerHTML =
+    `<div class="route-edit-row"><button class="btn ghost btn-sm" data-act="edit-query">✏️ 修改查询条件</button></div>
+    <div class="route-summary">🧭 <b>${esc(modeName)}</b>：${esc(oName)} → ${esc(dName)}</div>
+    ${note}` +
+    routes.map((rt, i) => {
+      const isMain = i === plannedMainIdx;
+      const label = isMain ? '🏆 <b>最优方案</b>' : '<b>备选方案 ' + (++alt) + '</b>';
+      return `<div class="route-summary route-pick-card ${isMain ? '' : 'route-alt'}" data-act="pick-route" data-idx="${i}">
+      ${label}：距离 <b>${fmtRouteDist(rt.distance)}</b> · 预计 <b>约 ${fmtRouteDur(rt.duration)}</b>
+      ${rt.segDesc ? `<div class="route-seg">${esc(rt.segDesc)}</div>` : ''}
+    </div>`;
+    }).join('');
+}
+/* 输入解析：支持 经度,纬度 直接使用，否则地理编码 */
+async function parseRouteInput(str) {
+  const s = String(str || '').trim();
+  if (!s) return { error: '输入不能为空' };
+  const m = s.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m) return { lng: +m[1], lat: +m[2] };
+  const r = await amapGet('geocode/geo', { address: s });
+  if (r.status !== '1' || !r.geocodes || !r.geocodes.length) {
+    return { error: `无法定位「${s}」，请换更具体的地址或直接填 经度,纬度` };
+  }
+  const [lng, lat] = r.geocodes[0].location.split(',').map(Number);
+  return { lng, lat };
+}
+function pushPolyline(str, out) {
+  if (!str) return;
+  String(str).split(';').forEach(seg => {
+    const [lng, lat] = seg.split(',').map(Number);
+    if (!isNaN(lng) && !isNaN(lat)) out.push([lng, lat]);
+  });
+}
+/* 解析全部方案（最多3条）：最优+备选。transit 为换乘方案（步行/公交/地铁段拼合） */
+function parseRouteDataList(r, mode) {
+  if (mode === 'transit') {
+    const transits = (r.route && r.route.transits) || [];
+    // 全部解析（不截断），地铁模式需先过滤再取前3
+    return transits.map(t => {
+      const points = [];
+      const segs = [];
+      let hasRailway = false, hasBus = false;
+      (t.segments || []).forEach(seg => {
+        if (seg.walking && seg.walking.steps) {
+          seg.walking.steps.forEach(st => pushPolyline(st.polyline, points));
+          if (seg.walking.distance) segs.push('🚶' + (seg.walking.distance >= 1000 ? (seg.walking.distance / 1000).toFixed(1) + 'km' : Math.round(seg.walking.distance) + 'm'));
+        }
+        if (seg.bus && seg.bus.buslines) {
+          seg.bus.buslines.forEach(bl => pushPolyline(bl.polyline, points));
+          const names = seg.bus.buslines.map(b => b.name).filter(Boolean);
+          if (names.length) { segs.push('🚌' + names.join('/')); hasBus = true; }
+        }
+        if (seg.railway) {
+          pushPolyline(seg.railway.alt_polyline, points);
+          if (seg.railway.via_stops) seg.railway.via_stops.forEach(v => {
+            if (v.location) { const [lng, lat] = v.location.split(',').map(Number); if (!isNaN(lng) && !isNaN(lat)) points.push([lng, lat]); }
+          });
+          if (seg.railway.name) segs.push('🚇' + seg.railway.name);
+          hasRailway = true;
+        }
+      });
+      return { distance: t.distance || 0, duration: t.duration || 0, points, segDesc: segs.join(' → '), hasRailway, hasBus };
+    }).filter(x => x.points.length);
+  }
+  const root = mode === 'bicycling' ? (r.data || {}) : (r.route || {});
+  return (root.paths || []).slice(0, 3).map(p => {
+    const points = [];
+    (p.steps || []).forEach(st => pushPolyline(st.polyline, points));
+    return { distance: p.distance || 0, duration: p.duration || 0, points };
+  }).filter(x => x.points.length);
+}
+/* 对照地图选点：收起弹窗，地图上显示编号候选标注，用户在地图上确认 */
+function showRoutePickBanner(target) {
+  const b = $('#map-route-banner');
+  if (b) {
+    b.classList.remove('hidden');
+    $('#map-route-text').textContent = target === 'origin'
+      ? '📍 为「起点」选点：单击卡片查看位置，双击卡片确认选择'
+      : '📍 为「终点」选点：单击卡片查看位置，双击卡片确认选择';
+  }
+}
+function hideRoutePickBanner() {
+  const b = $('#map-route-banner');
+  if (b) b.classList.add('hidden');
+}
+function cancelRoutePick() {
+  routePickStage = null;
+  hideRoutePickBanner();
+  clearMarkers();
+  renderMapResults([], '');
+  showRouteEndpointMarkers();
+  openRouteModal();
+}
+function switchMapSideTab(tab) {
+  const btn = document.querySelector('#map-side-tabs [data-tab="' + tab + '"]');
+  if (btn) btn.click();
+}
+/* 打开路径规划弹窗（不重置已填内容） */
+function openRouteModal() {
+  $('#modal-route').classList.remove('hidden');
+}
+/* 地图上显示已选 起/终 标注（绿色起 / 红色终） */
+function showRouteEndpointMarkers() {
+  if (!amapMap) return;
+  amapRouteOverlays.forEach(o => { try { amapMap.remove(o); } catch (e) { /* 忽略 */ } });
+  amapRouteOverlays = [];
+  if (routeOriginSel) {
+    const m = makeLabelMarker([routeOriginSel.lng, routeOriginSel.lat], '起', routeOriginSel.name, '#10b981');
+    amapMap.add(m);
+    amapRouteOverlays.push(m);
+  }
+  if (routeDestSel) {
+    const m = makeLabelMarker([routeDestSel.lng, routeDestSel.lat], '终', routeDestSel.name, '#ef4444');
+    amapMap.add(m);
+    amapRouteOverlays.push(m);
+  }
+}
+/* 搜索起终点候选：收起弹窗 → 地图编号标注 + 右侧列表 → 对照地图点选 */
+async function searchRoutePoint(target) {
+  const input = $('#route-' + target);
+  const kw = input.value.trim();
+  if (!kw) return toast('请输入搜索关键词', 'warn');
+  const m = kw.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m) {
+    const lng = +m[1], lat = +m[2];
+    let adcode = '';
+    try {
+      const rg = await amapGet('geocode/regeo', { location: lng + ',' + lat, extensions: 'base' });
+      if (rg.status === '1' && rg.regeocode && rg.regeocode.addressComponent) adcode = rg.regeocode.addressComponent.adcode || '';
+    } catch (e) { /* adcode 缺失时混合出行会再反查 */ }
+    selectRoutePoint(target, { lng, lat, name: `坐标点 (${lng}, ${lat})`, address: '', adcode });
+    return;
+  }
+  closeModal('modal-route');
+  routePickStage = target;
+  showRoutePickBanner(target);
+  switchMapSideTab('results');
+  $('#map-side-hint').textContent = '搜索中…';
+  const r = await amapGet('place/text', { keywords: kw, offset: 10, page: 1, extensions: 'base' });
+  const pois = r.pois || [];
+  if (r.status !== '1' || !pois.length) {
+    hideRoutePickBanner();
+    routePickStage = null;
+    toast('无结果，请换更具体的关键词', 'warn');
+    openRouteModal();
+    return;
+  }
+  try {
+    await ensureMapReady();
+    renderMapResults(pois, kw);
+    $('#map-side-hint').textContent = `为「${target === 'origin' ? '起点' : '终点'}」选点：单击卡片查看位置，双击卡片确认`;
+    amapMap.setZoomAndCenter(13, pois[0].location.split(',').map(Number));
+    markPois(pois);
+  } catch (e) {
+    hideRoutePickBanner();
+    routePickStage = null;
+    toast('地图未就绪：' + (e.message || e), 'err');
+    openRouteModal();
+  }
+}
+function selectRoutePoint(target, p) {
+  if (target === 'origin') routeOriginSel = p; else routeDestSel = p;
+  routePickStage = null;
+  hideRoutePickBanner();
+  renderRoutePicked(target);
+  $('#route-' + target + '-list').innerHTML = '';
+  // 清除地图上的候选编号标注与高亮，只保留 起/终 标注
+  if (amapMap) {
+    amapMarkers.forEach(mm => { try { amapMap.remove(mm); } catch (e) { /* 忽略 */ } });
+    amapMarkers = [];
+    clearHighlight();
+  }
+  showRouteEndpointMarkers();
+}
+function renderRoutePicked(target) {
+  const sel = target === 'origin' ? routeOriginSel : routeDestSel;
+  const el = $('#route-' + target + '-picked');
+  if (!sel) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `<span class="route-picked-info">✔ 已选：<b>${esc(sel.name)}</b>${sel.address ? ' · ' + esc(sel.address) : ''}</span>
+    <button class="route-picked-clear" data-clear="${target}" title="清除选择">✕</button>`;
+}
+async function planRoute() {
+  if (!mapCfg.key) { toast('请先配置 Key', 'warn'); openMapConfigModal(); return; }
+  routePickStage = null;
+  hideRoutePickBanner();
+  if (!routeOriginSel) return toast('请先搜索并选择起点的具体位置', 'warn');
+  if (!routeDestSel) return toast('请先搜索并选择终点的具体位置', 'warn');
+  const mode = $('#route-mode').value;
+  const o = { lng: routeOriginSel.lng, lat: routeOriginSel.lat };
+  const d = { lng: routeDestSel.lng, lat: routeDestSel.lat };
+  const originName = routeOriginSel.name;
+  const destName = routeDestSel.name;
+  updateMapStatus('路径规划中…');
+  const origin = [o.lng, o.lat].join(',');
+  const dest = [d.lng, d.lat].join(',');
+  let r;
+  if (mode === 'bicycling') {
+    r = await amapGet('direction/bicycling', { origin, destination: dest }, 'v4');
+  } else if (mode === 'metro' || mode === 'transit') {
+    // 地铁/混合出行（公交/地铁/步行综合）需要起终点城市编码，缺失时逆地理反查
+    let cityO = routeOriginSel.adcode || '';
+    let cityD = routeDestSel.adcode || '';
+    if (!cityO) {
+      const g = await amapGet('geocode/regeo', { location: origin, extensions: 'base' });
+      if (g.status === '1' && g.regeocode && g.regeocode.addressComponent) cityO = g.regeocode.addressComponent.adcode || '';
+    }
+    if (!cityD) {
+      const g = await amapGet('geocode/regeo', { location: dest, extensions: 'base' });
+      if (g.status === '1' && g.regeocode && g.regeocode.addressComponent) cityD = g.regeocode.addressComponent.adcode || '';
+    }
+    if (!cityO || !cityD) {
+      updateMapStatus('地铁/混合出行需要起点/终点城市信息');
+      return toast('地铁/混合出行需要起终点城市信息，请通过搜索选点后再试', 'warn');
+    }
+    r = await amapGet('direction/transit/integrated', { origin, destination: dest, city: cityO, cityd: cityD, extensions: 'base' });
+  } else {
+    r = await amapGet('direction/' + mode, { origin, destination: dest, extensions: 'base' });
+  }
+  let routes = parseRouteDataList(r, (mode === 'metro' || mode === 'transit') ? 'transit' : mode);
+  let routeNote = '';
+  if (mode === 'metro') {
+    // 地铁模式：优先保留含地铁段的方案，过滤纯公交方案
+    const rail = routes.filter(x => x.hasRailway);
+    if (rail.length) {
+      routeNote = `已过滤纯公交方案，共 ${rail.length} 条含地铁方案`;
+      routes = rail;
+    } else {
+      routeNote = '未找到含地铁的方案，展示全部换乘方案';
+    }
+  }
+  routes = routes.slice(0, 3);
+  if (!routes.length) {
+    updateMapStatus('路径规划失败：' + (r.info || r.infocode || '未找到可行路线'));
+    return toast('未找到可行路线', 'warn');
+  }
+  try {
+    await ensureMapReady();
+    clearMarkers(); // 清除旧标注与旧路线
+    plannedRoutes = routes;
+    drawPlannedRoutes(0); // 最优实线 + 备选淡蓝虚线
+    const sMarker = makeLabelMarker([o.lng, o.lat], '起', originName, '#10b981');
+    const eMarker = makeLabelMarker([d.lng, d.lat], '终', destName, '#ef4444');
+    amapMap.add(sMarker);
+    amapMap.add(eMarker);
+    amapRouteOverlays.push(sMarker);
+    amapRouteOverlays.push(eMarker);
+    const modeName = { driving: '驾车', walking: '步行', bicycling: '骑行', transit: '混合', metro: '地铁' }[mode] || mode;
+    lastRouteMeta = { modeName, oName: originName, dName: destName, note: routeNote };
+    renderRouteSummary(modeName, originName, destName, routes);
+    updateMapStatus(`${modeName}路线规划完成：最优 ${fmtRouteDist(routes[0].distance)} · 共 ${routes.length} 条方案`);
+  } catch (err) {
+    updateMapStatus('路线绘制失败：' + (err.message || err));
+  }
+}
+function fmtRouteDist(meters) {
+  return meters >= 1000 ? (meters / 1000).toFixed(1) + ' 公里' : Math.round(meters) + ' 米';
+}
+function fmtRouteDur(sec) {
+  if (!sec) return '未知';
+  if (sec >= 3600) return Math.floor(sec / 3600) + ' 小时 ' + Math.round((sec % 3600) / 60) + ' 分钟';
+  return Math.round(sec / 60) + ' 分钟';
+}
+/* 带文字标注的标记（水滴形，label 如 1/2/3 或 📍） */
+function makeLabelMarker(lnglat, label, title, color) {
+  const content = `<div class="map-pin" style="background:${color || '#4f6ef7'}" title="${esc(title)}"><span>${esc(label)}</span></div>`;
+  return new AMap.Marker({
+    position: lnglat,
+    content,
+    offset: new AMap.Pixel(-17, -40),
+    zIndex: 120,
+  });
+}
+/* 弹出信息窗体（名称/地址详情） */
+function showInfo(html, lnglat) {
+  if (!amapMap) return;
+  if (!amapInfoWindow) amapInfoWindow = new AMap.InfoWindow({ offset: new AMap.Pixel(0, -38) });
+  amapInfoWindow.setContent(html);
+  amapInfoWindow.open(amapMap, lnglat);
+}
+/* 批量标注搜索结果（蓝色序号，与右侧列表编号对应） */
+function markPois(pois) {
+  clearMarkers();
+  amapCurrentPois = pois;
+  pois.forEach((p, i) => {
+    const ll = p.location.split(',').map(Number);
+    const m = makeLabelMarker(ll, String(i + 1), p.name + ' ' + (p.address || ''), '#4f6ef7');
+    m.on('click', () => {
+      highlightArea(ll);
+      showInfo('<b>' + esc(p.name) + '</b><br />' + esc(p.address || ''), ll);
+    });
+    amapMap.add(m);
+    amapMarkers.push(m);
+  });
+}
+function centerMap(lnglat, title, isCurrent) {
+  if (!amapMap) return;
+  try { if (amapMap.stopMove) amapMap.stopMove(); } catch (e) { /* 2.0 可能无此方法 */ }
+  amapMap.setZoomAndCenter(isCurrent ? 15 : 13, lnglat);
+  clearMarkers();
+  const marker = makeLabelMarker(lnglat, '📍', title, '#ef4444');
+  marker.on('click', () => showInfo(esc(title), lnglat));
+  amapMap.add(marker);
+  amapMarkers.push(marker);
+  // 等居中动画完成后再弹信息窗，防止其自动平移打断居中
+  setTimeout(() => showInfo(esc(title), lnglat), 450);
+}
+/* 初始化地图页 */
+async function initMapPage() {
+  if (!mapCfg.key) {
+    updateMapStatus('未配置 API Key');
+    renderMapEmpty('尚未配置高德地图 API Key');
+    return;
+  }
+  updateMapStatus('地图加载中…');
+  try {
+    await ensureMapReady();
+    renderFences();
+    updateMapStatus('地图已就绪，可搜索地点、绘制围栏或点击「📍 定位」');
+  } catch (err) {
+    renderMapEmpty('地图加载失败：' + (err.message || err));
+    updateMapStatus('地图加载失败');
+  }
+}
+/* 定位当前位置：优先浏览器定位（需 HTTPS），失败回退高德 IP 定位 */
+async function locateMe() {
+  if (!mapCfg.key) { toast('请先配置 Key', 'warn'); openMapConfigModal(); return null; }
+  updateMapStatus('定位中…');
+  if (navigator.geolocation) {
+    try {
+      const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000, maximumAge: 60000 }));
+      const p = [pos.coords.longitude, pos.coords.latitude];
+      await ensureMapReady();
+      centerMap(p, '我的位置（浏览器定位）', true);
+      updateMapStatus(`定位成功（精度约 ${Math.round(pos.coords.accuracy)} 米）`);
+      return { lng: p[0], lat: p[1], source: 'browser' };
+    } catch (e) { /* 回退 IP 定位 */ }
+  }
+  const r = await amapGet('ip', {});
+  if (r.status === '1' && r.rectangle) {
+    const [a, b] = r.rectangle.split(';').map(s => s.split(',').map(Number));
+    const center = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    try {
+      await ensureMapReady();
+      centerMap(center, `当前位置（IP 定位：${r.city || r.province}）`, true);
+    } catch (e) { /* 无 Key 时忽略显示 */ }
+    updateMapStatus(`IP 定位：${r.province || ''} ${r.city || ''}（${r.adcode}）`);
+    return { lng: center[0], lat: center[1], source: 'ip', province: r.province, city: r.city, adcode: r.adcode };
+  }
+  updateMapStatus('定位失败：' + (r.error || r.info || '未知错误'));
+  return { error: r.error || r.info || '定位失败' };
+}
+/* 地点搜索（POI） */
+async function mapSearchDo(keyword) {
+  keyword = (keyword || '').trim();
+  if (!keyword) return toast('请输入搜索关键词', 'warn');
+  if (!mapCfg.key) { toast('请先配置 Key', 'warn'); openMapConfigModal(); return null; }
+  updateMapStatus('搜索中：' + keyword);
+  const r = await amapGet('place/text', { keywords: keyword, offset: 10, page: 1, extensions: 'base' });
+  if (r.status !== '1') {
+    updateMapStatus('搜索失败：' + (r.error || r.info || '未知错误'));
+    return { error: r.error || r.info || '搜索失败' };
+  }
+  const pois = r.pois || [];
+  renderMapResults(pois, keyword);
+  try {
+    await ensureMapReady();
+    if (pois.length) {
+      const first = pois[0];
+      amapMap.setZoomAndCenter(13, first.location.split(',').map(Number));
+      markPois(pois); // 搜索结果全部标注
+    }
+  } catch (e) { /* 地图未就绪仅返回数据 */ }
+  updateMapStatus(`找到 ${pois.length} 个结果：${keyword}`);
+  return pois;
+}
+function renderMapResults(pois, keyword) {
+  const box = $('#map-results');
+  $('#map-side-hint').textContent = `关键词「${esc(keyword)}」共 ${pois.length} 条`;
+  if (!pois.length) { box.innerHTML = '<div class="tp-empty">无结果</div>'; return; }
+  box.innerHTML = pois.map((p, i) => `<div class="map-item" data-index="${i}" data-lng="${p.location.split(',')[0]}" data-lat="${p.location.split(',')[1]}" data-name="${esc(p.name)}">
+    <span class="map-item-idx">${i + 1}</span>
+    <div class="map-item-body">
+      <div class="map-item-name">${esc(p.name)}</div>
+      <div class="map-item-addr">${esc(p.address || (p.pname + ' ' + p.cityname + ' ' + p.adname))}</div>
+    </div>
+  </div>`).join('');
+}
+/* Key 配置弹窗 */
+function openMapConfigModal() {
+  $('#map-key').value = mapCfg.key || '';
+  $('#map-sec').value = mapCfg.securityCode || '';
+  $('#modal-mapcfg').classList.remove('hidden');
+  $('#map-key').focus();
+}
+/* 浏览器全屏切换（全屏后 AMap 需 resize） */
+function toggleMapFullscreen() {
+  const el = $('#page-map');
+  if (!document.fullscreenElement) {
+    if (el.requestFullscreen) el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+}
+async function saveAndTestMapConfig() {
+  const key = $('#map-key').value.trim();
+  const sec = $('#map-sec').value.trim();
+  if (!key) return toast('请输入 API Key', 'warn');
+  mapCfg = { key, securityCode: sec };
+  save(LS.map, mapCfg);
+  updateMapStatus('正在测试 Key…');
+  const r = await amapGet('ip', {});
+  if (r.status === '1') {
+    closeModal('modal-mapcfg');
+    toast('Key 测试成功 ✅');
+    if (window.AMap) {
+      toast('地图 SDK 已用旧 Key 加载，请刷新页面（Ctrl+F5）后生效', 'warn');
+    } else {
+      renderMapEmpty('');
+      initMapPage();
+    }
+    return;
+  }
+  const msg = r.error || r.info || '未知错误';
+  updateMapStatus('Key 测试失败：' + msg);
+  toast('Key 测试失败：' + msg, 'warn');
+}
+
 /* ==================== DeepSeek 智能体 ==================== */
 const TOOLS = [
   { type: 'function', function: { name: 'get_current_week', description: '获取当前是第几周、今天是星期几、开学日期等信息', parameters: { type: 'object', properties: {} } } },
@@ -2231,7 +3196,10 @@ const TOOLS = [
   { type: 'function', function: { name: 'delete_event', description: '删除规划事件，keyword 为事件名称关键词', parameters: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] } } },
   { type: 'function', function: { name: 'get_usage', description: '查询本看板 DeepSeek 消耗统计（请求数/tokens/估算费用，按模型分项）与官方账户余额快照。range 可选 today/7d/30d/all，默认 today', parameters: { type: 'object', properties: { range: { type: 'string', enum: ['today', '7d', '30d', 'all'] } } } } },
   { type: 'function', function: { name: 'refresh_balance', description: '调用 DeepSeek 官方余额接口刷新账户余额', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage'] } }, required: ['page'] } } },
+  { type: 'function', function: { name: 'map_locate', description: '定位当前所在城市（高德IP定位，返回省市/编码/中心坐标，并在地图页显示）', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'map_search', description: '搜索地点（高德POI搜索），在地图页显示结果列表与标记', parameters: { type: 'object', properties: { keyword: { type: 'string', description: '地点关键词，如 西安交通大学' } }, required: ['keyword'] } } },
+  { type: 'function', function: { name: 'map_geocode', description: '地址转经纬度（高德地理编码），并在地图页定位显示', parameters: { type: 'object', properties: { address: { type: 'string', description: '结构化地址，如 北京市海淀区中关村大街1号' } }, required: ['address'] } } },
+  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map'] } }, required: ['page'] } } },
   { type: 'function', function: { name: 'get_settings', description: '获取看板设置（开学日期、节数等）', parameters: { type: 'object', properties: {} } } },
 ];
 const TOOL_LABELS = {
@@ -2248,6 +3216,7 @@ const TOOL_LABELS = {
   list_tasks: '查询待办', add_task: '添加任务', complete_task: '完成任务', delete_task: '删除任务',
   list_events: '查询规划', add_event: '添加事件', edit_event: '编辑事件', delete_event: '删除事件',
   get_usage: '查询用量', refresh_balance: '刷新余额',
+  map_locate: '地图定位', map_search: '地图搜索', map_geocode: '地址编码',
 };
 
 function findBookmark(keyword) {
@@ -2397,8 +3366,56 @@ async function executeTool(name, args) {
     }
     case 'show_page': {
       const page = args && args.page;
-      if (['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage'].includes(page)) { switchPage(page); return { ok: true, page }; }
+      if (['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map'].includes(page)) { switchPage(page); return { ok: true, page }; }
       return { error: '无效页面' };
+    }
+    case 'map_locate': {
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      const r = await amapGet('ip', {});
+      if (r.status !== '1') return { error: r.error || r.info || 'IP 定位失败' };
+      const [a, b] = (r.rectangle || '').split(';').map(s => s.split(',').map(Number));
+      const center = (a && b && a.length === 2 && b.length === 2) ? [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] : null;
+      switchPage('map');
+      try {
+        await ensureMapReady();
+        if (center) centerMap(center, `IP定位：${r.city || r.province}`, true);
+      } catch (e) { /* 仅返回数据 */ }
+      return { ok: true, province: r.province, city: r.city, adcode: r.adcode, center };
+    }
+    case 'map_search': {
+      const kw = String((args && args.keyword) || '').trim();
+      if (!kw) return { error: '请提供搜索关键词' };
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      const r = await amapGet('place/text', { keywords: kw, offset: 10, page: 1, extensions: 'base' });
+      if (r.status !== '1') return { error: r.error || r.info || 'POI 搜索失败' };
+      const pois = r.pois || [];
+      const results = pois.map(p => ({ name: p.name, address: p.address || '', location: p.location, city: p.cityname }));
+      switchPage('map');
+      try {
+        await ensureMapReady();
+        renderMapResults(pois, kw);
+        if (pois.length) {
+          const first = pois[0];
+          amapMap.setZoomAndCenter(13, first.location.split(',').map(Number));
+          markPois(pois);
+        }
+      } catch (e) { /* 仅返回数据 */ }
+      return { ok: true, count: results.length, results: results.slice(0, 10) };
+    }
+    case 'map_geocode': {
+      const addr = String((args && args.address) || '').trim();
+      if (!addr) return { error: '请提供地址' };
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      const r = await amapGet('geocode/geo', { address: addr });
+      if (r.status !== '1' || !r.geocodes || !r.geocodes.length) return { error: r.error || r.info || '未找到该地址' };
+      const g = r.geocodes[0];
+      const ll = g.location.split(',').map(Number);
+      switchPage('map');
+      try {
+        await ensureMapReady();
+        centerMap(ll, g.formatted_address || addr, false);
+      } catch (e) { /* 仅返回数据 */ }
+      return { ok: true, address: g.formatted_address, location: g.location, lng: ll[0], lat: ll[1], level: g.level, province: g.province, city: g.city, adcode: g.adcode };
     }
     case 'get_usage': {
       const range = ['today', '7d', '30d', 'all'].includes(args && args.range) ? args.range : 'today';
@@ -2707,6 +3724,7 @@ async function executeTool(name, args) {
         taskCount: tasks.length,
         pendingTaskCount: tasks.filter(t => !t.done).length,
         eventCount: events.length,
+        mapConfigured: !!mapCfg.key,
         sectionTimesConfigured: (settings.secTimes || []).filter(Boolean).length,
       };
     default:
@@ -2724,6 +3742,7 @@ function buildSystemPrompt() {
 【待办页】查询/添加/完成/删除待办任务（按截止时间优先度排序；截止前1小时会自动通过「提醒」栏目提醒用户，红色圆圈角标提示新提醒）。
 【规划页】查询/添加/编辑/删除未来规划事件（甘特图显示，任务名称-开始日期-结束日期；日期格式 YYYY-MM-DD）。
 【用量中心】查询本看板 DeepSeek 消耗统计与官方账户余额（get_usage/refresh_balance；费用为估算值，单价可在用量中心页调整）。
+【地图页】定位当前城市（map_locate，高德IP定位）；搜索地点（map_search，POI搜索）；地址转经纬度（map_geocode，地理编码）。需用户已在地图页「⚙️ Key 配置」填写高德 Key 并通过测试，否则提醒用户先配置。
 【通用】切换页面(show_page)；读取看板设置与统计(get_settings)。
 今天日期：${dateStr(new Date())}，${WEEKDAYS[wi.weekday - 1]}，${wkTxt}。
 规则：
@@ -3023,13 +4042,14 @@ async function sendVoiceText(text) {
 /* ==================== 页面切换 ==================== */
 function switchPage(page) {
   $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage'].forEach(p => {
+  ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map'].forEach(p => {
     $('#page-' + p).classList.toggle('hidden', p !== page);
   });
   if (page === 'bookmarks') renderBookmarks();
   if (page === 'tasks') renderTasks();
   if (page === 'gantt') renderGantt();
   if (page === 'usage') renderUsage();
+  if (page === 'map') initMapPage();
   if (page === 'schedule') renderAll();
 }
 
@@ -3397,6 +4417,207 @@ function bindAll() {
     save(LS.settings, settings);
     renderUsage();
     toast('全部模型单价已保存，费用估算已更新');
+  });
+
+  // 地图
+  $('#btn-map-config').addEventListener('click', openMapConfigModal);
+  $('#map-save-test').addEventListener('click', saveAndTestMapConfig);
+  $('#btn-map-search').addEventListener('click', () => mapSearchDo($('#map-search-input').value));
+  $('#map-search-input').addEventListener('keydown', e => { if (e.key === 'Enter') mapSearchDo(e.target.value); });
+  $('#btn-map-locate').addEventListener('click', locateMe);
+  $('#btn-map-full').addEventListener('click', toggleMapFullscreen);
+  // 全屏状态变化时更新按钮文字并重绘地图
+  document.addEventListener('fullscreenchange', () => {
+    const btn = $('#btn-map-full');
+    if (btn) btn.textContent = document.fullscreenElement ? '⛶ 退出全屏' : '⛶ 全屏';
+    setTimeout(() => { if (amapMap) amapMap.resize(); }, 150);
+  });
+  $('#map-container').addEventListener('click', e => {
+    if (e.target.closest('[data-act="config"]')) openMapConfigModal();
+  });
+  $('#map-results').addEventListener('click', e => {
+    // 结果卡上的操作按钮：修改查询条件 / 切换主方案
+    const actEl = e.target.closest('[data-act]');
+    if (actEl) {
+      if (actEl.dataset.act === 'edit-query') {
+        openRouteModal();
+        toast('已回到查询条件编辑，可修改后重新规划');
+        return;
+      }
+      if (actEl.dataset.act === 'pick-route') {
+        const idx = +actEl.dataset.idx || 0;
+        if (plannedRoutes[idx]) {
+          drawPlannedRoutes(idx); // 点击的方案变蓝色实线主路线
+          rerenderRouteSummary();
+          updateMapStatus(`已切换：${idx === plannedMainIdx ? '最优方案' : '备选方案 ' + idx + ' 为主路线'}`);
+        }
+        return;
+      }
+    }
+    const it = e.target.closest('.map-item');
+    if (!it) return;
+    try {
+      const idx = +it.dataset.index || 0;
+      const p = (amapCurrentPois || [])[idx];
+      const ll = [+it.dataset.lng, +it.dataset.lat];
+      if (!amapMap) return;
+      // 单击（含选点模式）：居中缩放 + 信息窗查看位置，不选中
+      if (amapMap.stopMove) { try { amapMap.stopMove(); } catch (e2) { /* 忽略 */ } }
+      amapMap.setZoomAndCenter(15, ll);
+      highlightArea(ll); // 虚线+淡蓝透明框出建筑位置
+      if (p) setTimeout(() => showInfo('<b>' + esc(p.name) + '</b><br />' + esc(p.address || ''), ll), 450);
+    } catch (err) {
+      console.warn('地图结果点击处理失败：', err);
+    }
+  });
+  // 双击卡片（选点模式）：确认选中该位置为起点/终点
+  $('#map-results').addEventListener('dblclick', e => {
+    const it = e.target.closest('.map-item');
+    if (!it || !routePickStage) return;
+    const idx = +it.dataset.index || 0;
+    const p = (amapCurrentPois || [])[idx];
+    if (!p) return;
+    const stage = routePickStage;
+    selectRoutePoint(stage, {
+      lng: +it.dataset.lng, lat: +it.dataset.lat,
+      name: p.name, address: p.address || (p.pname + ' ' + p.cityname + ' ' + p.adname),
+      adcode: p.adcode || '',
+    });
+    toast(`已选择「${p.name}」作为${stage === 'origin' ? '起点' : '终点'}`);
+    openRouteModal();
+  });
+
+  // 电子围栏
+  $('#btn-fence-add').addEventListener('click', openFenceModal);
+  $$('.fence-type-card').forEach(c => c.addEventListener('click', () => {
+    $$('.fence-type-card').forEach(x => x.classList.toggle('active', x === c));
+    const isCircle = c.dataset.type === 'circle';
+    $('#fence-radius-group').classList.toggle('hidden', !isCircle);
+    $('#fence-pick-group').classList.toggle('hidden', isCircle);
+  }));
+  $$('#fence-circle-mode .seg-btn').forEach(b => b.addEventListener('click', () => {
+    $$('#fence-circle-mode .seg-btn').forEach(x => x.classList.toggle('active', x === b));
+    fenceCircleMode = b.dataset.mode;
+  }));
+  $('#fence-draw-start').addEventListener('click', () => {
+    const name = $('#fence-name').value.trim();
+    if (!name) return toast('请输入围栏名称', 'warn');
+    const card = document.querySelector('.fence-type-card.active');
+    const type = card ? card.dataset.type : 'polygon';
+    if (type === 'polygon' && $('#fence-draw-mode').value === 'pick') {
+      const fid = $('#fence-constraint').value;
+      if (!fid) return toast('选点绘制需要先有旧围栏作为约束', 'warn');
+      closeModal('modal-fence');
+      startFencePointPick(name, fid);
+      return;
+    }
+    if (type === 'circle' && fenceCircleMode === 'input') {
+      const radius = parseFloat($('#fence-radius').value);
+      if (!(radius >= 10)) return toast('请输入有效半径（≥10 米）', 'warn');
+      closeModal('modal-fence');
+      startCenterPick(name, Math.round(radius));
+      return;
+    }
+    closeModal('modal-fence');
+    startFenceDraw(type, name);
+  });
+  $('#map-draw-done').addEventListener('click', finishFencePointPick);
+  $('#map-draw-cancel').addEventListener('click', () => {
+    if (pickFenceHandler) {
+      if (amapMap) amapMap.off('click', pickFenceHandler);
+      pickFenceHandler = null;
+      pickedFencePoints = [];
+      hideDrawBanner();
+      if (!fencesInteractive) setFencesInteractive(true); // 恢复旧围栏点击
+      updateMapStatus('已取消选点绘制');
+      return;
+    }
+    if (centerPickHandler) {
+      if (amapMap) amapMap.off('click', centerPickHandler);
+      centerPickHandler = null;
+      hideDrawBanner();
+      if (!fencesInteractive) setFencesInteractive(true); // 恢复旧围栏点击
+      updateMapStatus('已取消圆心选择');
+      return;
+    }
+    closeMouseTool();
+    updateMapStatus('已取消围栏绘制');
+  });
+  $$('#map-side-tabs .seg-btn').forEach(b => b.addEventListener('click', () => {
+    $$('#map-side-tabs .seg-btn').forEach(x => x.classList.toggle('active', x === b));
+    const tab = b.dataset.tab;
+    $('#map-results').classList.toggle('hidden', tab !== 'results');
+    $('#map-side-hint').classList.toggle('hidden', tab !== 'results');
+    $('#map-fences').classList.toggle('hidden', tab !== 'fences');
+  }));
+  $('#fence-list').addEventListener('click', e => {
+    const btn = e.target.closest('[data-act]');
+    const item = e.target.closest('.fence-item');
+    if (!btn || !item) return;
+    const f = fences.find(x => x.id === item.dataset.id);
+    if (!f) return;
+    if (btn.dataset.act === 'locate') zoomToFence(f);
+    else if (btn.dataset.act === 'rename') {
+      const name = prompt('围栏新名称：', f.name);
+      if (name && name.trim()) {
+        f.name = name.trim();
+        f.updatedAt = Date.now();
+        save(LS.fences, fences);
+        renderFences();
+        toast('围栏已改名');
+      }
+    } else if (btn.dataset.act === 'redraw') {
+      editingFenceId = f.id;
+      closeModal('modal-fence');
+      startFenceDraw(f.type, f.name);
+    } else if (btn.dataset.act === 'del') {
+      if (confirm(`删除电子围栏「${f.name}」？`)) {
+        fences = fences.filter(x => x.id !== f.id);
+        save(LS.fences, fences);
+        renderFences();
+        toast('围栏已删除');
+      }
+    }
+  });
+
+  // 测距与路径规划
+  $('#btn-map-ruler').addEventListener('click', toggleRanging);
+  $('#btn-map-route').addEventListener('click', () => {
+    $('#route-origin').value = '';
+    $('#route-dest').value = '';
+    $('#route-mode').value = 'driving';
+    routeOriginSel = null;
+    routeDestSel = null;
+    renderRoutePicked('origin');
+    renderRoutePicked('dest');
+    $('#route-origin-list').innerHTML = '';
+    $('#route-dest-list').innerHTML = '';
+    openRouteModal();
+    $('#route-origin').focus();
+  });
+  $('#route-origin-search').addEventListener('click', () => searchRoutePoint('origin'));
+  $('#route-dest-search').addEventListener('click', () => searchRoutePoint('dest'));
+  $('#route-origin').addEventListener('keydown', e => { if (e.key === 'Enter') searchRoutePoint('origin'); });
+  $('#route-dest').addEventListener('keydown', e => { if (e.key === 'Enter') searchRoutePoint('dest'); });
+  $('#map-route-cancel').addEventListener('click', cancelRoutePick);
+  $$('.route-pick-list').forEach(el => el.addEventListener('click', e => {
+    const it = e.target.closest('.route-pick-item');
+    if (!it) return;
+    selectRoutePoint(it.dataset.target, {
+      lng: +it.dataset.lng, lat: +it.dataset.lat,
+      name: it.dataset.name, address: it.dataset.addr,
+    });
+  }));
+  $$('.route-picked').forEach(el => el.addEventListener('click', e => {
+    const btn = e.target.closest('[data-clear]');
+    if (!btn) return;
+    if (btn.dataset.clear === 'origin') routeOriginSel = null;
+    else routeDestSel = null;
+    renderRoutePicked(btn.dataset.clear);
+  }));
+  $('#route-plan-start').addEventListener('click', () => {
+    closeModal('modal-route');
+    planRoute();
   });
 
   // 智能体

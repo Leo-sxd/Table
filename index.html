@@ -18,6 +18,7 @@
         <button class="nav-item" data-page="tasks">✅ 待办</button>
         <button class="nav-item" data-page="gantt">📊 规划</button>
         <button class="nav-item" data-page="usage">💰 用量</button>
+        <button class="nav-item" data-page="map">🗺️ 地图</button>
       </nav>
       <div class="side-foot">数据保存在本地浏览器<br />v1.0 测试版 · DeepSeek 驱动</div>
     </aside>
@@ -185,6 +186,55 @@
           <div class="card-head"><h2>单价设置（¥ / 百万 tokens · 每模型独立六项）</h2><span class="card-hint">官方调价后在此修改，费用估算立即生效；高峰时段为北京时间 9:00-12:00、14:00-18:00（其余为空闲时段）</span></div>
           <div id="us-price-groups"></div>
           <div class="us-price-row"><button class="btn primary" id="us-price-save">💾 保存全部单价</button></div>
+        </div>
+      </section>
+
+      <!-- ============ 页面：地图 ============ -->
+      <section id="page-map" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>🗺️ 高德地图</h1>
+            <p class="sub" id="map-status">未配置 API Key</p>
+          </div>
+          <div class="head-controls">
+            <input id="map-search-input" class="search-input" type="search" placeholder="🔍 搜索地点（如：西安交通大学）" style="max-width:280px" />
+            <button class="btn primary" id="btn-map-search">查找</button>
+            <button class="btn ghost" id="btn-map-locate">📍 定位</button>
+            <button class="btn ghost" id="btn-fence-add">⛓️ 电子围栏</button>
+            <button class="btn ghost" id="btn-map-ruler">📏 测距</button>
+            <button class="btn ghost" id="btn-map-route">🧭 路径规划</button>
+            <button class="btn ghost" id="btn-map-config">⚙️ Key 配置</button>
+            <button class="btn ghost" id="btn-map-full">⛶ 全屏</button>
+          </div>
+        </div>
+        <div class="map-layout">
+          <div class="card map-wrap">
+            <div id="map-container"></div>
+            <div id="map-draw-banner" class="map-draw-banner hidden">
+              <span id="map-draw-text">正在绘制围栏…</span>
+              <button class="btn primary btn-sm hidden" id="map-draw-done">✅ 完成</button>
+              <button class="btn ghost btn-sm" id="map-draw-cancel">取消</button>
+            </div>
+            <div id="map-route-banner" class="map-draw-banner map-route-banner hidden">
+              <span id="map-route-text">正在选择起点…</span>
+              <button class="btn ghost btn-sm" id="map-route-cancel">取消</button>
+            </div>
+          </div>
+          <div class="card map-side">
+            <div class="card-head">
+              <h2>地图面板</h2>
+              <div class="seg" id="map-side-tabs">
+                <button class="seg-btn active" data-tab="results">搜索结果</button>
+                <button class="seg-btn" data-tab="fences">⛓️ 围栏</button>
+              </div>
+            </div>
+            <span class="card-hint" id="map-side-hint" style="margin-bottom:6px">输入关键词点击「查找」</span>
+            <div id="map-results" class="map-results"></div>
+            <div id="map-fences" class="map-fences hidden">
+              <div class="fence-count" id="fence-count"></div>
+              <div id="fence-list"></div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -424,6 +474,130 @@
         <button class="btn ghost" data-close="modal-event">取消</button>
         <button class="btn ghost danger hidden" id="ev-delete">删除</button>
         <button class="btn primary" id="ev-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 地图 Key 配置弹窗 ==================== -->
+  <div id="modal-mapcfg" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>🗺️ 高德地图 Key 配置</h3>
+        <button class="modal-close" data-close="modal-mapcfg">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field"><span>API Key *（Web服务 / JS API 共用）</span>
+          <input id="map-key" type="text" placeholder="在高德开放平台创建应用后获取" /></label>
+        <label class="field"><span>安全密钥（SecurityJsCode，JS API 2.0 必需）</span>
+          <input id="map-sec" type="text" placeholder="与 Key 配套的安全密钥" /></label>
+        <div class="guide">
+          <b>申请步骤：</b><br />
+          1. 打开 <code>https://console.amap.com</code> → 应用管理 → 我的应用 → 创建新应用<br />
+          2. 添加 Key，服务平台勾选 <b>「Web端(JS API)」</b> 与 <b>「Web服务」</b><br />
+          3. 复制 <b>Key</b> 与 <b>安全密钥</b> 填入上方，点「保存并测试」<br />
+          Key 仅保存在本机浏览器 localStorage，不会上传。
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-mapcfg">取消</button>
+        <button class="btn primary" id="map-save-test">💾 保存并测试</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 电子围栏弹窗 ==================== -->
+  <div id="modal-fence" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="fence-modal-title">⛓️ 新建电子围栏</h3>
+        <button class="modal-close" data-close="modal-fence">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field"><span>围栏名称 *</span><input id="fence-name" type="text" maxlength="30" placeholder="如：宿舍区 / 图书馆 / 自习室范围" /></label>
+        <span style="display:block;font-size:13px;color:var(--ink2);margin-bottom:6px">围栏形状</span>
+        <div class="fence-types">
+          <button type="button" class="fence-type-card active" data-type="polygon">
+            <span class="ft-icon">⬠</span>
+            <span class="ft-label">多边形围栏</span>
+            <span class="ft-desc">单击添加顶点，双击结束</span>
+          </button>
+          <button type="button" class="fence-type-card" data-type="circle">
+            <span class="ft-icon">◯</span>
+            <span class="ft-label">圆形围栏</span>
+            <span class="ft-desc">拖动设置半径，或输入半径点选圆心</span>
+          </button>
+        </div>
+        <div id="fence-pick-group" class="hidden">
+          <label class="field"><span>多边形绘制方式</span>
+            <select id="fence-draw-mode">
+              <option value="free">🖱 自由绘制（单击加点，双击结束）</option>
+              <option value="pick">🎯 选点绘制（选取旧围栏内的多个点）</option>
+            </select>
+          </label>
+          <label class="field"><span>约束围栏（选点绘制时选择旧围栏）</span>
+            <select id="fence-constraint"></select>
+          </label>
+        </div>
+        <div id="fence-radius-group" class="hidden">
+          <label class="field"><span>圆形半径（米）</span>
+            <input id="fence-radius" type="number" min="10" max="100000" step="10" value="200" /></label>
+          <div class="seg" id="fence-circle-mode" style="margin-bottom:14px">
+            <button class="seg-btn active" data-mode="drag">🖱 拖动设置半径</button>
+            <button class="seg-btn" data-mode="input">🎯 输入半径（点选圆心）</button>
+          </div>
+        </div>
+        <div class="guide">保存后围栏以橙色虚线 + 半透明填充显示在地图上；可在右侧「⛓️ 围栏」面板中定位、改名、重绘或删除。</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-fence">取消</button>
+        <button class="btn primary" id="fence-draw-start">▶ 开始绘制</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 路径规划弹窗 ==================== -->
+  <div id="modal-route" class="modal hidden">
+    <div class="modal-mask"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>🧭 路径规划</h3>
+        <button class="modal-close" data-close="modal-route">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="route-field">
+          <span class="route-label">起点 *（搜索后从列表选择具体位置）</span>
+          <div class="route-input-row">
+            <input id="route-origin" type="text" placeholder="如：西安交通大学 东门（或 经度,纬度）" />
+            <button class="btn ghost" id="route-origin-search">🔍 搜索</button>
+          </div>
+          <div class="route-picked hidden" id="route-origin-picked"></div>
+          <div class="route-pick-list" id="route-origin-list"></div>
+        </div>
+        <div class="route-field">
+          <span class="route-label">终点 *（搜索后从列表选择具体位置）</span>
+          <div class="route-input-row">
+            <input id="route-dest" type="text" placeholder="如：钟楼饭店（或 经度,纬度）" />
+            <button class="btn ghost" id="route-dest-search">🔍 搜索</button>
+          </div>
+          <div class="route-picked hidden" id="route-dest-picked"></div>
+          <div class="route-pick-list" id="route-dest-list"></div>
+        </div>
+        <label class="field"><span>出行方式</span>
+          <select id="route-mode">
+            <option value="driving">🚗 驾车</option>
+            <option value="walking">🚶 步行</option>
+            <option value="bicycling">🚴 骑行</option>
+            <option value="metro">🚇 地铁（优先含地铁的换乘方案）</option>
+            <option value="transit">🚌 混合（公交/地铁/步行综合）</option>
+          </select>
+        </label>
+        <div class="guide">⚠️ 规划将给出「🏆 最优方案」与最多两条备选方案（虚线显示）；混合出行自动组合公交、地铁与步行。重名建筑请务必在地图上对照选点。</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="modal-route">取消</button>
+        <button class="btn primary" id="route-plan-start">▶ 开始规划</button>
       </div>
     </div>
   </div>
