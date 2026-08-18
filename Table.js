@@ -72,6 +72,8 @@ const LS = {
   balance: 'td_balance_v1',
   map: 'td_map_v1',
   fences: 'td_fences_v1',
+  multi: 'td_multi_v1',
+  multiGroups: 'td_multi_groups_v1',
 };
 function load(key, def) {
   try {
@@ -96,6 +98,9 @@ let balance = load(LS.balance, null);   // 官方余额快照 {ok,total,granted,
 let usRange = 'today';                  // 用量中心当前范围 today/7d/30d/all
 let mapCfg = load(LS.map, { key: '', securityCode: '' }); // 高德地图配置（用户手动填写）
 let fences = load(LS.fences, []);        // 电子围栏 [{id,name,type:polygon|circle,polygon:{path},circle:{center,radius},createdAt,updatedAt}]
+let multiState = load(LS.multi, { layout: 2, screens: [{ url: '' }, { url: '' }, { url: '' }, { url: '' }] }); // 多开器状态
+let multiGroups = load(LS.multiGroups, []); // 网址组 [{name,layout,urls[]}]
+let multiExpandIdx = null;              // 单屏放大索引（空=正常分屏）
 
 /* ==================== 周次计算 ==================== */
 function weekInfo() {
@@ -3192,6 +3197,140 @@ async function saveAndTestMapConfig() {
   toast('Key 测试失败：' + msg, 'warn');
 }
 
+/* ==================== 多开器 ==================== */
+function renderMultiGroups() {
+  const sel = $('#multi-group');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— 网址组 —</option>' +
+    multiGroups.map((g, i) => `<option value="${i}">${esc(g.name)}（${g.layout}屏）</option>`).join('');
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+function updateMultiStatus() {
+  const el = $('#multi-status');
+  if (el) el.textContent = `共 ${multiState.layout} 屏 · 已存 ${multiGroups.length} 个网址组 · 摄像头/麦克风页面会弹出授权，建议 HTTPS 访问 · 禁止嵌入的站点该屏会显示空白`;
+}
+function renderMulti() {
+  const grid = $('#multi-grid');
+  if (!grid) return;
+  const layout = multiState.layout;
+  grid.className = 'multi-grid layout-' + layout;
+  const indexes = multiExpandIdx !== null ? [multiExpandIdx] : Array.from({ length: layout }, (_, i) => i);
+  const expanded = multiExpandIdx !== null;
+  grid.innerHTML = indexes.map(i => {
+    const s = multiState.screens[i] || { url: '' };
+    return `<div class="multi-cell${expanded ? ' expanded' : ''}" data-idx="${i}">
+      <div class="multi-bar">
+        <span class="multi-idx">${i + 1}</span>
+        <input class="multi-url" data-idx="${i}" placeholder="输入网址，如 github.com" value="${esc(s.url)}" />
+        <button class="btn ghost btn-sm" data-act="go" data-idx="${i}" title="加载/刷新">前往</button>
+        <button class="btn ghost btn-sm" data-act="open" data-idx="${i}" title="新标签页打开">↗</button>
+        <button class="btn ghost btn-sm" data-act="pop" data-idx="${i}" title="独立窗口打开（绕过嵌入限制/第三方Cookie拦截）">🪟</button>
+        <button class="btn ghost btn-sm" data-act="zoom" data-idx="${i}" title="单屏放大">⛶</button>
+        <button class="btn ghost btn-sm" data-act="detect" data-idx="${i}" title="可嵌入性检测">🔍</button>
+        ${expanded ? `<button class="btn ghost danger btn-sm" data-act="unzoom" title="退出放大">✖</button>` : ''}
+      </div>
+      <div class="multi-frame-wrap">
+        <iframe class="multi-frame" data-idx="${i}" src="${esc(s.url)}" loading="lazy" allowfullscreen allow="camera; microphone; geolocation; autoplay; clipboard-write; fullscreen"></iframe>
+      </div>
+    </div>`;
+  }).join('');
+  renderMultiGroups();
+  updateMultiStatus();
+}
+function normalizeMultiUrl(url) {
+  let u = String(url || '').trim();
+  if (!u) return '';
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  return u;
+}
+function goMulti(idx) {
+  const input = document.querySelector('.multi-url[data-idx="' + idx + '"]');
+  const url = normalizeMultiUrl(input ? input.value : '');
+  if (!url) return toast('请输入网址', 'warn');
+  if (!multiState.screens[idx]) multiState.screens[idx] = {};
+  multiState.screens[idx].url = url;
+  save(LS.multi, multiState);
+  const frame = document.querySelector('.multi-frame[data-idx="' + idx + '"]');
+  if (frame) frame.src = url;
+  toast(`第 ${idx + 1} 屏已加载：${url}`);
+}
+function expandMulti(idx) {
+  multiExpandIdx = multiExpandIdx === idx ? null : idx;
+  renderMulti();
+}
+/* 可嵌入性检测：网络可达性 + 嵌入限制提示 */
+async function detectMultiEmbed(idx) {
+  const s = multiState.screens[idx] || {};
+  const url = normalizeMultiUrl(s.url);
+  if (!url) return toast('请先填写网址', 'warn');
+  let host = url;
+  try { host = new URL(url).hostname; } catch (e) { /* 忽略 */ }
+  try {
+    await fetch(url, { method: 'HEAD', mode: 'no-cors' });
+    toast(`「${host}」网络可达。能否嵌入以实际显示为准——若该屏空白，说明站点设置了 X-Frame-Options 禁止嵌入`);
+  } catch (e) {
+    toast(`「${host}」无法访问：${e.message || e}`, 'warn');
+  }
+}
+let multiWins = [null, null, null, null]; // 外置窗口引用（按屏索引）
+/* 独立窗口打开：绕过 iframe 嵌入限制（X-Frame-Options/CSP）与第三方 Cookie 分区，窗口自动在屏幕右侧排开 */
+function popMulti(idx) {
+  const s = multiState.screens[idx] || {};
+  const url = normalizeMultiUrl(s.url);
+  if (!url) return toast(`第 ${idx + 1} 屏没有网址`, 'warn');
+  const w = Math.min(1100, Math.max(420, screen.availWidth - 120));
+  const h = Math.min(780, Math.max(320, screen.availHeight - 120));
+  const cols = 2;
+  const left = (screen.availLeft || 0) + 20 + (idx % cols) * (w + 14);
+  const top = (screen.availTop || 0) + 20 + Math.floor(idx / cols) * (h + 14);
+  const win = window.open(url, 'td_multi_win_' + idx, `width=${w},height=${h},left=${left},top=${top},location=yes,menubar=no,status=no,toolbar=no,scrollbars=yes,resizable=yes`);
+  if (!win) { toast('浏览器拦截了弹窗：请允许本站弹出窗口后重试', 'warn'); return; }
+  multiWins[idx] = win;
+  try { win.focus(); } catch (e) { /* 忽略 */ }
+  toast(`第 ${idx + 1} 屏已在独立窗口打开（不受嵌入/第三方Cookie限制）`, 'ok');
+}
+function popMultiAll() {
+  const idxs = multiExpandIdx !== null ? [multiExpandIdx] : Array.from({ length: multiState.layout }, (_, i) => i);
+  let opened = 0;
+  idxs.forEach(i => {
+    const s = multiState.screens[i] || {};
+    if (s.url && s.url.trim()) { popMulti(i); opened++; }
+  });
+  if (!opened) toast('各屏均未填写网址', 'warn');
+}
+function saveMultiGroup() {
+  const name = prompt('网址组名称：');
+  if (!name || !name.trim()) return;
+  const n = name.trim();
+  if (multiGroups.some(g => g.name === n)) return toast('该组名已存在', 'warn');
+  const urls = [0, 1, 2, 3].map(i => (multiState.screens[i] ? multiState.screens[i].url : ''));
+  multiGroups.push({ name: n, layout: multiState.layout, urls });
+  save(LS.multiGroups, multiGroups);
+  renderMultiGroups();
+  toast(`网址组「${n}」已保存`);
+}
+function loadMultiGroup(idx) {
+  const g = multiGroups[+idx];
+  if (!g) return;
+  multiState.layout = g.layout || 2;
+  multiState.screens = [0, 1, 2, 3].map(i => ({ url: g.urls[i] || '' }));
+  multiExpandIdx = null;
+  save(LS.multi, multiState);
+  renderMulti();
+  toast(`已加载网址组「${g.name}」（${g.layout} 屏）`);
+}
+function toggleMultiFullscreen() {
+  const el = $('#page-multi');
+  if (!document.fullscreenElement) {
+    if (el.requestFullscreen) el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+}
+
 /* ==================== DeepSeek 智能体 ==================== */
 const TOOLS = [
   { type: 'function', function: { name: 'get_current_week', description: '获取当前是第几周、今天是星期几、开学日期等信息', parameters: { type: 'object', properties: {} } } },
@@ -3243,7 +3382,12 @@ const TOOLS = [
   { type: 'function', function: { name: 'delete_fence', description: '删除某个电子围栏，keyword 为围栏名称关键词', parameters: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] } } },
   { type: 'function', function: { name: 'start_fence_draw', description: '打开新建电子围栏弹窗供用户手动绘制，type 为 polygon 或 circle', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['polygon', 'circle'] } } } } },
   { type: 'function', function: { name: 'map_fullscreen', description: '切换地图全屏/退出全屏', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map'] } }, required: ['page'] } } },
+  { type: 'function', function: { name: 'multi_open', description: '在多开器中打开网址（urls 为 1-4 个网址的数组；layout 可选 1/2/4，默认按数量自动）', parameters: { type: 'object', properties: { urls: { type: 'array', items: { type: 'string' } }, layout: { type: 'number' } }, required: ['urls'] } } },
+  { type: 'function', function: { name: 'multi_list', description: '查看多开器当前分屏布局、各屏网址与已保存的网址组', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'multi_save_group', description: '把当前多开器分屏保存为网址组', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'multi_load_group', description: '加载已保存的网址组', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
+  { type: 'function', function: { name: 'multi_expand', description: '将某一屏放大占据整个多开器工作区（index 1-4）', parameters: { type: 'object', properties: { index: { type: 'number' } }, required: ['index'] } } },
+  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map', 'multi'] } }, required: ['page'] } } },
   { type: 'function', function: { name: 'get_settings', description: '获取看板设置（开学日期、节数等）', parameters: { type: 'object', properties: {} } } },
 ];
 const TOOL_LABELS = {
@@ -3263,6 +3407,8 @@ const TOOL_LABELS = {
   map_locate: '地图定位', map_search: '地图搜索', map_geocode: '地址编码',
   map_route: '路径规划', map_ranging: '开启测距', list_fences: '列出围栏',
   locate_fence: '定位围栏', delete_fence: '删除围栏', start_fence_draw: '新建围栏', map_fullscreen: '切换全屏',
+  multi_open: '多开器打开', multi_list: '多开器状态', multi_save_group: '保存网址组',
+  multi_load_group: '加载网址组', multi_expand: '单屏放大',
 };
 
 function findBookmark(keyword) {
@@ -3410,9 +3556,60 @@ async function executeTool(name, args) {
       renderAll();
       return { ok: true, removed: removed.name };
     }
+    case 'multi_open': {
+      let urls = Array.isArray(args && args.urls) ? args.urls : [String((args && args.urls) || '')];
+      urls = urls.slice(0, 4).map(u => String(u || '').trim()).filter(Boolean);
+      if (!urls.length) return { error: '请提供至少一个网址' };
+      const layout = [1, 2, 4].includes(+(args && args.layout) || 0) ? +(args && args.layout) : (urls.length >= 4 ? 4 : urls.length >= 2 ? 2 : 1);
+      multiState.screens = [0, 1, 2, 3].map(i => ({ url: urls[i] ? normalizeMultiUrl(urls[i]) : '' }));
+      multiState.layout = layout;
+      multiExpandIdx = null;
+      save(LS.multi, multiState);
+      switchPage('multi');
+      renderMulti();
+      return { ok: true, layout, urls: [0, 1, 2, 3].map(i => urls[i] || '').filter(Boolean) };
+    }
+    case 'multi_list': {
+      return {
+        layout: multiState.layout,
+        expanded: multiExpandIdx !== null ? multiExpandIdx + 1 : null,
+        screens: [0, 1, 2, 3].map(i => ({ index: i + 1, url: (multiState.screens[i] && multiState.screens[i].url) || '' })),
+        groups: multiGroups.map(g => ({ name: g.name, layout: g.layout, urls: g.urls })),
+      };
+    }
+    case 'multi_save_group': {
+      const name = String((args && args.name) || '').trim();
+      if (!name) return { error: '请提供网址组名称' };
+      if (multiGroups.some(g => g.name === name)) return { error: '该组名已存在，请换一个名称' };
+      const urls = [0, 1, 2, 3].map(i => (multiState.screens[i] && multiState.screens[i].url) || '');
+      multiGroups.push({ name, layout: multiState.layout, urls });
+      save(LS.multiGroups, multiGroups);
+      renderMultiGroups();
+      return { ok: true, name, layout: multiState.layout, urls };
+    }
+    case 'multi_load_group': {
+      const kw = String((args && args.name) || '').trim().toLowerCase();
+      if (!kw) return { error: '请提供网址组名称' };
+      const g = multiGroups.find(x => (x.name || '').toLowerCase().includes(kw));
+      if (!g) return { error: `未找到网址组「${args && args.name}」` };
+      multiState.layout = g.layout || 2;
+      multiState.screens = [0, 1, 2, 3].map(i => ({ url: g.urls[i] || '' }));
+      multiExpandIdx = null;
+      save(LS.multi, multiState);
+      switchPage('multi');
+      renderMulti();
+      return { ok: true, name: g.name, layout: g.layout, urls: g.urls };
+    }
+    case 'multi_expand': {
+      const idx = Math.min(4, Math.max(1, +(args && args.index) || 1)) - 1;
+      multiExpandIdx = idx;
+      switchPage('multi');
+      renderMulti();
+      return { ok: true, expanded: idx + 1, url: (multiState.screens[idx] && multiState.screens[idx].url) || '' };
+    }
     case 'show_page': {
       const page = args && args.page;
-      if (['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map'].includes(page)) { switchPage(page); return { ok: true, page }; }
+      if (['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map', 'multi'].includes(page)) { switchPage(page); return { ok: true, page }; }
       return { error: '无效页面' };
     }
     case 'map_locate': {
@@ -3861,6 +4058,7 @@ function buildSystemPrompt() {
 【规划页】查询/添加/编辑/删除未来规划事件（甘特图显示，任务名称-开始日期-结束日期；日期格式 YYYY-MM-DD）。
 【用量中心】查询本看板 DeepSeek 消耗统计与官方账户余额（get_usage/refresh_balance；费用为估算值，单价可在用量中心页调整）。
 【地图页】定位当前城市（map_locate，高德IP定位）；搜索地点（map_search，POI搜索）；地址转经纬度（map_geocode，地理编码）；路径规划（map_route，驾车/步行/骑行/地铁/混合）；开启测距（map_ranging）；电子围栏管理（list_fences/locate_fence/delete_fence/start_fence_draw）；切换全屏（map_fullscreen）。需用户已在地图页「⚙️ Key 配置」填写高德 Key 并通过测试，否则提醒用户先配置。
+【多开器】同时打开多个网址分屏显示（multi_open，urls 1-4 个，layout 1/2/4）；查看分屏状态与网址组（multi_list）；保存当前分屏为网址组（multi_save_group）；加载网址组（multi_load_group）；将某一屏放大独占工作区（multi_expand，index 1-4）。注意：部分网站通过 X-Frame-Options/CSP 禁止被内嵌，iframe 会显示空白或拒绝连接，这是网站自身限制。
 【通用】切换页面(show_page)；读取看板设置与统计(get_settings)。
 今天日期：${dateStr(new Date())}，${WEEKDAYS[wi.weekday - 1]}，${wkTxt}。
 规则：
@@ -4160,7 +4358,7 @@ async function sendVoiceText(text) {
 /* ==================== 页面切换 ==================== */
 function switchPage(page) {
   $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map'].forEach(p => {
+  ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map', 'multi'].forEach(p => {
     $('#page-' + p).classList.toggle('hidden', p !== page);
   });
   if (page === 'bookmarks') renderBookmarks();
@@ -4168,6 +4366,7 @@ function switchPage(page) {
   if (page === 'gantt') renderGantt();
   if (page === 'usage') renderUsage();
   if (page === 'map') initMapPage();
+  if (page === 'multi') renderMulti();
   if (page === 'schedule') renderAll();
 }
 
@@ -4738,6 +4937,61 @@ function bindAll() {
     planRoute();
   });
 
+  // 多开器
+  $('#multi-layout').addEventListener('click', e => {
+    const btn = e.target.closest('.seg-btn');
+    if (!btn) return;
+    $$('#multi-layout .seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+    multiState.layout = +btn.dataset.layout || 2;
+    multiExpandIdx = null;
+    save(LS.multi, multiState);
+    renderMulti();
+  });
+  $('#multi-group').addEventListener('change', e => {
+    if (e.target.value !== '') loadMultiGroup(e.target.value);
+  });
+  $('#multi-group-save').addEventListener('click', saveMultiGroup);
+  $('#multi-group-del').addEventListener('click', () => {
+    const sel = $('#multi-group');
+    if (sel.value === '') return toast('请先选择要删除的网址组', 'warn');
+    const g = multiGroups[+sel.value];
+    if (g && confirm(`删除网址组「${g.name}」？`)) {
+      multiGroups.splice(+sel.value, 1);
+      save(LS.multiGroups, multiGroups);
+      renderMultiGroups();
+      toast('网址组已删除');
+    }
+  });
+  $('#btn-multi-full').addEventListener('click', toggleMultiFullscreen);
+  $('#btn-multi-popall').addEventListener('click', popMultiAll);
+  document.addEventListener('fullscreenchange', () => {
+    const btn = $('#btn-multi-full');
+    if (btn) btn.textContent = document.fullscreenElement === $('#page-multi') ? '⛶ 退出全屏' : '⛶ 全屏';
+  });
+  $('#multi-grid').addEventListener('click', e => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const idx = +btn.dataset.idx || 0;
+    if (btn.dataset.act === 'go') goMulti(idx);
+    else if (btn.dataset.act === 'open') {
+      const s = multiState.screens[idx];
+      const url = normalizeMultiUrl(s ? s.url : '');
+      if (url) window.open(url, '_blank', 'noopener');
+    }
+    else if (btn.dataset.act === 'pop') popMulti(idx);
+    else if (btn.dataset.act === 'zoom') expandMulti(idx);
+    else if (btn.dataset.act === 'unzoom') { multiExpandIdx = null; renderMulti(); }
+    else if (btn.dataset.act === 'detect') detectMultiEmbed(idx);
+  });
+  $('#multi-grid').addEventListener('change', e => {
+    const inp = e.target.closest('.multi-url');
+    if (!inp) return;
+    const idx = +inp.dataset.idx || 0;
+    if (!multiState.screens[idx]) multiState.screens[idx] = {};
+    multiState.screens[idx].url = inp.value.trim();
+    save(LS.multi, multiState);
+  });
+
   // 智能体
   $('#btn-ag-save').addEventListener('click', () => {
     agentCfg = {
@@ -4815,6 +5069,7 @@ function renderAll() {
   renderTasks();
   renderGantt();
   renderUsage();
+  renderMulti();
   updateRemindBadge();
   renderReminders();
   updateBanner();

@@ -19,6 +19,7 @@
         <button class="nav-item" data-page="gantt">📊 规划</button>
         <button class="nav-item" data-page="usage">💰 用量</button>
         <button class="nav-item" data-page="map">🗺️ 地图</button>
+        <button class="nav-item" data-page="multi">🖥️ 多开器</button>
       </nav>
       <div class="side-foot">数据保存在本地浏览器<br />v1.0 测试版 · DeepSeek 驱动</div>
     </aside>
@@ -236,6 +237,29 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- ============ 页面：多开器 ============ -->
+      <section id="page-multi" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>🖥️ 多开器</h1>
+            <p class="sub" id="multi-status">同时打开多个网页分屏独立操作 · 部分网站禁止嵌入（该屏会显示空白）</p>
+          </div>
+          <div class="head-controls">
+            <div class="seg" id="multi-layout">
+              <button class="seg-btn" data-layout="1">1 屏</button>
+              <button class="seg-btn active" data-layout="2">2 屏</button>
+              <button class="seg-btn" data-layout="4">4 屏</button>
+            </div>
+            <select id="multi-group" class="select" style="width:auto"><option value="">— 网址组 —</option></select>
+            <button class="btn ghost" id="multi-group-save">💾 存为组</button>
+            <button class="btn ghost danger" id="multi-group-del">🗑 删组</button>
+            <button class="btn ghost" id="btn-multi-popall" title="把各屏网址在独立浏览器窗口中打开（不受嵌入/第三方Cookie限制）">🪟 全部外置</button>
+            <button class="btn ghost" id="btn-multi-full">⛶ 全屏</button>
+          </div>
+        </div>
+        <div id="multi-grid" class="multi-grid layout-2"></div>
       </section>
 
       <!-- ============ 页面：智能体 ============ -->
