@@ -3219,10 +3219,18 @@ function renderMulti() {
   const expanded = multiExpandIdx !== null;
   grid.innerHTML = indexes.map(i => {
     const s = multiState.screens[i] || { url: '' };
+    const z = Math.min(1.5, Math.max(0.35, +(s.zoom) || 1)); // 每屏缩放（0.35-1.5）
+    const zPct = Math.round(z * 100);
+    const zoomOpts = [35, 50, 65, 80, 100, 125, 150]
+      .map(p => `<option value="${p}"${p === zPct ? ' selected' : ''}>${p}%</option>`).join('');
+    const frameStyle = z !== 1
+      ? ` style="width:${(100 / z).toFixed(2)}%;height:${(100 / z).toFixed(2)}%;transform:scale(${z});transform-origin:0 0"`
+      : '';
     return `<div class="multi-cell${expanded ? ' expanded' : ''}" data-idx="${i}">
       <div class="multi-bar">
         <span class="multi-idx">${i + 1}</span>
         <input class="multi-url" data-idx="${i}" placeholder="输入网址，如 github.com" value="${esc(s.url)}" />
+        <select class="multi-zoom" data-idx="${i}" title="页面缩放：缩小时网页按完整桌面版式排版后整体缩小，双开/四开也能看全内容">${zoomOpts}</select>
         <button class="btn ghost btn-sm" data-act="go" data-idx="${i}" title="加载/刷新">前往</button>
         <button class="btn ghost btn-sm" data-act="open" data-idx="${i}" title="新标签页打开">↗</button>
         <button class="btn ghost btn-sm" data-act="pop" data-idx="${i}" title="独立窗口打开（绕过嵌入限制/第三方Cookie拦截）">🪟</button>
@@ -3231,7 +3239,7 @@ function renderMulti() {
         ${expanded ? `<button class="btn ghost danger btn-sm" data-act="unzoom" title="退出放大">✖</button>` : ''}
       </div>
       <div class="multi-frame-wrap">
-        <iframe class="multi-frame" data-idx="${i}" src="${esc(s.url)}" loading="lazy" allowfullscreen allow="camera; microphone; geolocation; autoplay; clipboard-write; fullscreen"></iframe>
+        <iframe class="multi-frame" data-idx="${i}" src="${esc(s.url)}" loading="lazy" allowfullscreen allow="camera; microphone; geolocation; autoplay; clipboard-write; fullscreen"${frameStyle}></iframe>
       </div>
     </div>`;
   }).join('');
@@ -3254,6 +3262,24 @@ function goMulti(idx) {
   const frame = document.querySelector('.multi-frame[data-idx="' + idx + '"]');
   if (frame) frame.src = url;
   toast(`第 ${idx + 1} 屏已加载：${url}`);
+}
+/* 每屏页面缩放：iframe 按桌面宽度排版后整体 scale 缩小，双开/四开也能看到完整版式（不重新渲染以免重载网页） */
+function applyMultiZoom(idx, z) {
+  z = Math.min(1.5, Math.max(0.35, z));
+  if (!multiState.screens[idx]) multiState.screens[idx] = {};
+  multiState.screens[idx].zoom = z;
+  save(LS.multi, multiState);
+  const frame = document.querySelector('.multi-frame[data-idx="' + idx + '"]');
+  if (frame) {
+    if (z !== 1) {
+      frame.style.width = (100 / z) + '%';
+      frame.style.height = (100 / z) + '%';
+      frame.style.transform = 'scale(' + z + ')';
+      frame.style.transformOrigin = '0 0';
+    } else {
+      frame.style.width = frame.style.height = frame.style.transform = frame.style.transformOrigin = '';
+    }
+  }
 }
 function expandMulti(idx) {
   multiExpandIdx = multiExpandIdx === idx ? null : idx;
@@ -4984,6 +5010,8 @@ function bindAll() {
     else if (btn.dataset.act === 'detect') detectMultiEmbed(idx);
   });
   $('#multi-grid').addEventListener('change', e => {
+    const zoomSel = e.target.closest('.multi-zoom');
+    if (zoomSel) { applyMultiZoom(+zoomSel.dataset.idx || 0, (+zoomSel.value) / 100); return; }
     const inp = e.target.closest('.multi-url');
     if (!inp) return;
     const idx = +inp.dataset.idx || 0;

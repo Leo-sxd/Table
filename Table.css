@@ -731,7 +731,12 @@ input, select, textarea { font-family: inherit; }
   outline: none; background: #fff; color: var(--ink);
 }
 .multi-url:focus { border-color: var(--accent); }
-.multi-frame-wrap { flex: 1; min-height: 0; background: #fff; }
+.multi-zoom {
+  flex: none; width: 76px; padding: 4px 3px;
+  border: 1px solid var(--line); border-radius: 7px; font-size: 11.5px;
+  outline: none; background: #fff; color: var(--ink);
+}
+.multi-frame-wrap { flex: 1; min-height: 0; background: #fff; position: relative; overflow: hidden; }
 .multi-frame { width: 100%; height: 100%; border: 0; display: block; }
 #page-multi:fullscreen { background: var(--bg); padding: 18px 22px; overflow: auto; }
 #page-multi:fullscreen .multi-grid { height: calc(100vh - 130px); min-height: 0; }
