@@ -2933,10 +2933,15 @@ async function planRoute() {
   if (!routeOriginSel) return toast('请先搜索并选择起点的具体位置', 'warn');
   if (!routeDestSel) return toast('请先搜索并选择终点的具体位置', 'warn');
   const mode = $('#route-mode').value;
-  const o = { lng: routeOriginSel.lng, lat: routeOriginSel.lat };
-  const d = { lng: routeDestSel.lng, lat: routeDestSel.lat };
-  const originName = routeOriginSel.name;
-  const destName = routeDestSel.name;
+  const res = await planRouteCore(routeOriginSel, routeDestSel, mode);
+  if (res && res.error) toast(res.error, 'warn');
+}
+/* 路径规划核心（弹窗与智能体共用），返回结果或 {error} */
+async function planRouteCore(originSel, destSel, mode) {
+  const o = { lng: originSel.lng, lat: originSel.lat };
+  const d = { lng: destSel.lng, lat: destSel.lat };
+  const originName = originSel.name;
+  const destName = destSel.name;
   updateMapStatus('路径规划中…');
   const origin = [o.lng, o.lat].join(',');
   const dest = [d.lng, d.lat].join(',');
@@ -2945,8 +2950,8 @@ async function planRoute() {
     r = await amapGet('direction/bicycling', { origin, destination: dest }, 'v4');
   } else if (mode === 'metro' || mode === 'transit') {
     // 地铁/混合出行（公交/地铁/步行综合）需要起终点城市编码，缺失时逆地理反查
-    let cityO = routeOriginSel.adcode || '';
-    let cityD = routeDestSel.adcode || '';
+    let cityO = originSel.adcode || '';
+    let cityD = destSel.adcode || '';
     if (!cityO) {
       const g = await amapGet('geocode/regeo', { location: origin, extensions: 'base' });
       if (g.status === '1' && g.regeocode && g.regeocode.addressComponent) cityO = g.regeocode.addressComponent.adcode || '';
@@ -2957,7 +2962,7 @@ async function planRoute() {
     }
     if (!cityO || !cityD) {
       updateMapStatus('地铁/混合出行需要起点/终点城市信息');
-      return toast('地铁/混合出行需要起终点城市信息，请通过搜索选点后再试', 'warn');
+      return { error: '地铁/混合出行需要起终点城市信息' };
     }
     r = await amapGet('direction/transit/integrated', { origin, destination: dest, city: cityO, cityd: cityD, extensions: 'base' });
   } else {
@@ -2978,7 +2983,7 @@ async function planRoute() {
   routes = routes.slice(0, 3);
   if (!routes.length) {
     updateMapStatus('路径规划失败：' + (r.info || r.infocode || '未找到可行路线'));
-    return toast('未找到可行路线', 'warn');
+    return { error: '未找到可行路线' };
   }
   try {
     await ensureMapReady();
@@ -2995,8 +3000,21 @@ async function planRoute() {
     lastRouteMeta = { modeName, oName: originName, dName: destName, note: routeNote };
     renderRouteSummary(modeName, originName, destName, routes);
     updateMapStatus(`${modeName}路线规划完成：最优 ${fmtRouteDist(routes[0].distance)} · 共 ${routes.length} 条方案`);
+    return {
+      ok: true,
+      modeName,
+      note: routeNote,
+      routes: routes.map((rt, i) => ({
+        index: i,
+        isOptimal: i === 0,
+        distance: fmtRouteDist(rt.distance),
+        duration: fmtRouteDur(rt.duration),
+        segDesc: rt.segDesc || '',
+      })),
+    };
   } catch (err) {
     updateMapStatus('路线绘制失败：' + (err.message || err));
+    return { error: '路线绘制失败：' + (err.message || err) };
   }
 }
 function fmtRouteDist(meters) {
@@ -3218,6 +3236,13 @@ const TOOLS = [
   { type: 'function', function: { name: 'map_locate', description: '定位当前所在城市（高德IP定位，返回省市/编码/中心坐标，并在地图页显示）', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'map_search', description: '搜索地点（高德POI搜索），在地图页显示结果列表与标记', parameters: { type: 'object', properties: { keyword: { type: 'string', description: '地点关键词，如 西安交通大学' } }, required: ['keyword'] } } },
   { type: 'function', function: { name: 'map_geocode', description: '地址转经纬度（高德地理编码），并在地图页定位显示', parameters: { type: 'object', properties: { address: { type: 'string', description: '结构化地址，如 北京市海淀区中关村大街1号' } }, required: ['address'] } } },
+  { type: 'function', function: { name: 'map_route', description: '路径规划。origin/destination 可为地址文本或「经度,纬度」；mode 可选 driving/walking/bicycling/metro/transit（默认 driving）', parameters: { type: 'object', properties: { origin: { type: 'string' }, destination: { type: 'string' }, mode: { type: 'string', enum: ['driving', 'walking', 'bicycling', 'metro', 'transit'] } }, required: ['origin', 'destination'] } } },
+  { type: 'function', function: { name: 'map_ranging', description: '开启或关闭地图测距（开启后用户在地图上单击加点、双击结束）', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['start', 'stop'] } }, required: ['action'] } } },
+  { type: 'function', function: { name: 'list_fences', description: '列出全部电子围栏（名称/类型/尺寸）', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'locate_fence', description: '在地图上定位并高亮某个电子围栏，keyword 为围栏名称关键词', parameters: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] } } },
+  { type: 'function', function: { name: 'delete_fence', description: '删除某个电子围栏，keyword 为围栏名称关键词', parameters: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] } } },
+  { type: 'function', function: { name: 'start_fence_draw', description: '打开新建电子围栏弹窗供用户手动绘制，type 为 polygon 或 circle', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['polygon', 'circle'] } } } } },
+  { type: 'function', function: { name: 'map_fullscreen', description: '切换地图全屏/退出全屏', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['schedule', 'bookmarks', 'agent', 'tasks', 'gantt', 'usage', 'map'] } }, required: ['page'] } } },
   { type: 'function', function: { name: 'get_settings', description: '获取看板设置（开学日期、节数等）', parameters: { type: 'object', properties: {} } } },
 ];
@@ -3236,6 +3261,8 @@ const TOOL_LABELS = {
   list_events: '查询规划', add_event: '添加事件', edit_event: '编辑事件', delete_event: '删除事件',
   get_usage: '查询用量', refresh_balance: '刷新余额',
   map_locate: '地图定位', map_search: '地图搜索', map_geocode: '地址编码',
+  map_route: '路径规划', map_ranging: '开启测距', list_fences: '列出围栏',
+  locate_fence: '定位围栏', delete_fence: '删除围栏', start_fence_draw: '新建围栏', map_fullscreen: '切换全屏',
 };
 
 function findBookmark(keyword) {
@@ -3435,6 +3462,78 @@ async function executeTool(name, args) {
         centerMap(ll, g.formatted_address || addr, false);
       } catch (e) { /* 仅返回数据 */ }
       return { ok: true, address: g.formatted_address, location: g.location, lng: ll[0], lat: ll[1], level: g.level, province: g.province, city: g.city, adcode: g.adcode };
+    }
+    case 'map_route': {
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      const oText = String((args && args.origin) || '').trim();
+      const dText = String((args && args.destination) || '').trim();
+      const mode = ['driving', 'walking', 'bicycling', 'metro', 'transit'].includes(args && args.mode) ? args.mode : 'driving';
+      if (!oText || !dText) return { error: '请提供起点与终点' };
+      const o = await parseRouteInput(oText);
+      if (o.error) return { error: '起点：' + o.error };
+      const d = await parseRouteInput(dText);
+      if (d.error) return { error: '终点：' + d.error };
+      switchPage('map');
+      const res = await planRouteCore(
+        { lng: o.lng, lat: o.lat, name: oText, address: '', adcode: '' },
+        { lng: d.lng, lat: d.lat, name: dText, address: '', adcode: '' },
+        mode,
+      );
+      if (res.error) return { error: res.error };
+      return {
+        ok: true, mode: res.modeName, routes: res.routes,
+        note: `已在地图上绘制 ${res.routes.length} 条方案（最优+备选），右侧面板可查看距离与预计时间`,
+      };
+    }
+    case 'map_ranging': {
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      const action = args && args.action;
+      switchPage('map');
+      if (action === 'stop') {
+        if (rangingActive) { stopRanging(); return { ok: true, note: '测距已关闭' }; }
+        return { ok: true, note: '测距未在开启状态' };
+      }
+      await toggleRanging();
+      return { ok: true, note: rangingActive ? '测距已开启：请在地图上单击添加测距点，双击结束' : '测距已关闭' };
+    }
+    case 'list_fences': {
+      const list = fences.map(f => ({
+        name: f.name,
+        type: f.type,
+        detail: f.type === 'circle' ? `圆形 半径${Math.round(f.circle.radius)}米` : `多边形 ${(f.polygon ? f.polygon.path.length : 0)}个顶点`,
+      }));
+      return { count: list.length, fences: list };
+    }
+    case 'locate_fence': {
+      const kw = String((args && args.keyword) || '').trim().toLowerCase();
+      const f = fences.find(x => x.name.toLowerCase().includes(kw)) || null;
+      if (!f) return { error: `未找到围栏「${kw}」` };
+      switchPage('map');
+      try { await ensureMapReady(); zoomToFence(f); } catch (e) { /* 仅返回数据 */ }
+      return { ok: true, name: f.name, type: f.type };
+    }
+    case 'delete_fence': {
+      const kw = String((args && args.keyword) || '').trim().toLowerCase();
+      const f = fences.find(x => x.name.toLowerCase().includes(kw)) || null;
+      if (!f) return { error: `未找到围栏「${kw}」` };
+      fences = fences.filter(x => x.id !== f.id);
+      save(LS.fences, fences);
+      renderFences();
+      return { ok: true, removed: f.name };
+    }
+    case 'start_fence_draw': {
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      switchPage('map');
+      openFenceModal();
+      const type = (args && args.type) === 'circle' ? 'circle' : 'polygon';
+      const card = document.querySelector('.fence-type-card[data-type="' + type + '"]');
+      if (card) card.click();
+      return { ok: true, note: '已打开电子围栏新建窗口，请手动填写名称并在图纸上绘制' };
+    }
+    case 'map_fullscreen': {
+      switchPage('map');
+      toggleMapFullscreen();
+      return { ok: true, note: '已切换地图全屏状态' };
     }
     case 'get_usage': {
       const range = ['today', '7d', '30d', 'all'].includes(args && args.range) ? args.range : 'today';
@@ -3761,7 +3860,7 @@ function buildSystemPrompt() {
 【待办页】查询/添加/完成/删除待办任务（按截止时间优先度排序；截止前1小时会自动通过「提醒」栏目提醒用户，红色圆圈角标提示新提醒）。
 【规划页】查询/添加/编辑/删除未来规划事件（甘特图显示，任务名称-开始日期-结束日期；日期格式 YYYY-MM-DD）。
 【用量中心】查询本看板 DeepSeek 消耗统计与官方账户余额（get_usage/refresh_balance；费用为估算值，单价可在用量中心页调整）。
-【地图页】定位当前城市（map_locate，高德IP定位）；搜索地点（map_search，POI搜索）；地址转经纬度（map_geocode，地理编码）。需用户已在地图页「⚙️ Key 配置」填写高德 Key 并通过测试，否则提醒用户先配置。
+【地图页】定位当前城市（map_locate，高德IP定位）；搜索地点（map_search，POI搜索）；地址转经纬度（map_geocode，地理编码）；路径规划（map_route，驾车/步行/骑行/地铁/混合）；开启测距（map_ranging）；电子围栏管理（list_fences/locate_fence/delete_fence/start_fence_draw）；切换全屏（map_fullscreen）。需用户已在地图页「⚙️ Key 配置」填写高德 Key 并通过测试，否则提醒用户先配置。
 【通用】切换页面(show_page)；读取看板设置与统计(get_settings)。
 今天日期：${dateStr(new Date())}，${WEEKDAYS[wi.weekday - 1]}，${wkTxt}。
 规则：
