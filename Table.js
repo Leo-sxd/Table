@@ -1225,7 +1225,9 @@ function parsePaste(text) {
 function walkEdgeTree(node, folder, out) {
   if (!node) return;
   if (node.type === 'url' && node.url) {
-    out.push({ id: uid(), name: node.name || node.url, url: node.url, folder: folder || '未分组', category: '', date: node.date_added || '' });
+    const rootNames = ['收藏夹栏', '其他收藏夹', '同步收藏夹', '未分组', '导入收藏夹'];
+    const category = (folder && !rootNames.includes(folder)) ? folder : '';
+    out.push({ id: uid(), name: node.name || node.url, url: node.url, folder: folder || '未分组', category, date: node.date_added || '' });
   } else if (node.children) {
     node.children.forEach(c => walkEdgeTree(c, node.name || folder, out));
   }
@@ -1247,12 +1249,16 @@ function parseNetscapeHTML(text) {
   const out = [];
   let folder = '导入收藏夹';
   let curCategory = '';
+  let rootFolder = null; // 首个 H3 视为根文件夹（如 收藏夹栏），其直属书签不算分类
   const re = /<H3([^>]*)>([\s\S]*?)<\/H3>|<A[^>]*HREF="([^"]*)"[^>]*>([\s\S]*?)<\/A>/gi;
   let m;
   while ((m = re.exec(text))) {
     if (m[1] !== undefined) {
       const f = stripTags(m[2]).trim();
-      if (f) folder = f;
+      if (f) {
+        folder = f;
+        if (rootFolder === null) rootFolder = f;
+      }
       const cm = m[1].match(/CATEGORY="([^"]*)"/i);
       curCategory = cm ? cm[1] : '';
     } else if (m[3] !== undefined) {
@@ -1260,7 +1266,9 @@ function parseNetscapeHTML(text) {
       if (/^https?:/i.test(href)) {
         const name = stripTags(m[4]).trim() || href;
         const date = ((m[0].match(/ADD_DATE="(\d+)"/i) || [])[1]) || '';
-        out.push({ id: uid(), name, url: href, folder, category: curCategory || '', date });
+        // 分类：CATEGORY 属性优先；否则所在文件夹自动作为分类（根文件夹直属书签除外）
+        const category = curCategory || ((folder && folder !== rootFolder) ? folder : '');
+        out.push({ id: uid(), name, url: href, folder, category, date });
       }
     }
   }
@@ -1290,15 +1298,26 @@ async function importBookmarksFile(file) {
       }
     });
     if (newCats) save(LS.categories, categories);
-    const seen = new Set(bookmarks.map(b => normalizeUrl(b.url)));
-    let added = 0;
+    const byKey = new Map(bookmarks.map(b => [normalizeUrl(b.url), b]));
+    let added = 0, updated = 0;
     list.forEach(b => {
       const key = normalizeUrl(b.url);
-      if (!seen.has(key)) { bookmarks.push(b); seen.add(key); added++; }
+      const existing = byKey.get(key);
+      if (existing) {
+        // 重复导入时：给已有书签补齐缺失的分类/文件夹信息
+        let ch = false;
+        if (b.category && !existing.category) { existing.category = b.category; ch = true; }
+        if (b.folder && existing.folder === '导入收藏夹') { existing.folder = b.folder; ch = true; }
+        if (ch) updated++;
+        return;
+      }
+      bookmarks.push(b);
+      byKey.set(key, b);
+      added++;
     });
     save(LS.bookmarks, bookmarks);
     renderBookmarks();
-    toast(`导入成功：新增 ${added} 个网站（跳过重复 ${list.length - added} 个）`);
+    toast(`导入成功：新增 ${added} 个，更新分类 ${updated} 个（跳过重复 ${list.length - added - updated} 个）`);
   } catch (err) {
     toast('解析失败：' + (err.message || err), 'err');
   }
