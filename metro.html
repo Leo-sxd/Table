@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>地铁图</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #fff; overflow: hidden; }
+  #m { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="m"></div>
+<script>
+/* 高德「地铁图 JS API」宿主页：由 Table 主页面通过 iframe 加载（同源），
+   父页用 postMessage 下发 init/city/route，本页回传 frameReady/loaded/status/station/routeResult */
+var inst = null;
+var started = false;
+
+function start(cfg) {
+  if (started) return;
+  started = true;
+  window.__cb = function () {
+    if (typeof window.subway !== 'function') {
+      parent.postMessage({ t: 'status', ok: false, msg: '地铁图 SDK 入口未出现' }, '*');
+      return;
+    }
+    inst = window.subway('m', { adcode: String(cfg.adcode || '1100') });
+    inst.complete = function (st) {
+      if (st && st.status === 0) {
+        parent.postMessage({ t: 'status', ok: false, msg: '地铁图加载失败（Key 无效或该城市暂无数据）' }, '*');
+        return;
+      }
+      parent.postMessage({ t: 'status', ok: true, msg: 'ok' }, '*');
+    };
+    var ev = inst.event || inst;
+    if (ev && ev.on) {
+      ev.on('station.touch', function (e, info) {
+        parent.postMessage({ t: 'station', name: (info && info.name) || '', id: (info && info.id) || '' }, '*');
+      });
+      ev.on('routeComplete', function (e, info) {
+        parent.postMessage({ t: 'routeResult', data: (info && (info.data || info.info)) || info || null }, '*');
+      });
+    }
+    parent.postMessage({ t: 'loaded' }, '*');
+  };
+  var s = document.createElement('script');
+  s.src = 'https://webapi.amap.com/subway?v=1.0&key=' + encodeURIComponent(String(cfg.key || '')) + '&callback=__cb';
+  s.onerror = function () {
+    parent.postMessage({ t: 'status', ok: false, msg: '地铁图 SDK 加载失败：请检查网络，或在高德开放平台给该 Key 添加当前域名到白名单' }, '*');
+  };
+  document.body.appendChild(s);
+}
+
+window.addEventListener('message', function (ev) {
+  var d = ev.data || {};
+  if (d.t === 'init') start(d);
+  else if (d.t === 'city' && inst) { try { inst.setAdcode(String(d.adcode || '1100')); } catch (e) { /* 忽略 */ } }
+  else if (d.t === 'route' && inst) {
+    try { inst.route(String(d.start || ''), String(d.end || ''), {}); }
+    catch (e) { parent.postMessage({ t: 'status', ok: false, msg: '路线规划调用失败' }, '*'); }
+  }
+});
+
+window.addEventListener('load', function () {
+  parent.postMessage({ t: 'frameReady' }, '*');
+});
+</script>
+</body>
+</html>

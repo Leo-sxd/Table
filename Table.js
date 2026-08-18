@@ -3210,6 +3210,7 @@ let metroSdkFailMsg = '';
 let metroFrameBuilt = false;   // 地铁图 iframe 是否已注入 srcdoc
 let metroRouteDone = false;    // 路线规划是否已出结果
 let metroRouteTimer = null;    // 路线规划看门狗
+let metroLoadTimer = null;     // SDK 加载超时看门狗
 /* 城市名 → [4 位 adcode, 拼音]（来源：webapi.amap.com/subway/data/citylist.json，已核实） */
 const METRO_CITY = {
   '北京': ['1100', 'beijing'], '上海': ['3100', 'shanghai'], '广州': ['4401', 'guangzhou'], '深圳': ['4403', 'shenzhen'],
@@ -3253,38 +3254,33 @@ function exitMetroMode() {
   $('#map-metro-panel').classList.add('hidden');
   updateMapStatus('地铁图已退出');
 }
-/* 在 iframe 内加载高德「地铁图 JS API」：示意图被严格限制在 iframe（= 高德地图所在的矩形区域）内，不会溢出覆盖页面其他部分；父页与 iframe 用 postMessage 通信 */
+/* 重试：重建地铁图 iframe（重新加载 SDK） */
+function metroRetry() {
+  const retry = $('#btn-mm-retry');
+  if (retry) retry.classList.add('hidden');
+  metroSdkState = 'idle';
+  metroFrameBuilt = false;
+  buildMetroFrame();
+  metroStatus('正在重新加载地铁图…');
+}
+/* 加载地铁图宿主页 metro.html（同源 iframe）：示意图被严格限制在地图矩形区域内；SDK 请求的 Referer 为真实页面地址，高德 Key 域名白名单可正确校验（srcdoc 的 about:srcdoc Referer 会被白名单拒绝导致永远加载不出来） */
 function buildMetroFrame() {
   const frame = $('#metro-frame');
   if (!frame) return;
-  const key = String(mapCfg.key || '').replace(/[^0-9a-zA-Z]/g, '');
-  const adcode = (METRO_CITY[metroCity] || [])[0] || '1100';
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}#m{width:100%;height:100%}</style></head><body><div id="m"></div><script>
-window.__inst = null;
-window.__cb = function () {
-  if (typeof window.subway !== 'function') { parent.postMessage({ t: 'status', ok: false, msg: '地铁图 SDK 入口未出现' }, '*'); return; }
-  var inst = window.subway('m', { adcode: '${adcode}' });
-  window.__inst = inst;
-  inst.complete = function (st) {
-    if (st && st.status === 0) { parent.postMessage({ t: 'status', ok: false, msg: '地铁图加载失败（Key 无效或该城市暂无数据）' }, '*'); return; }
-    parent.postMessage({ t: 'status', ok: true, msg: 'ok' }, '*');
-  };
-  var ev = inst.event || inst;
-  if (ev && ev.on) {
-    ev.on('station.touch', function (e, info) { parent.postMessage({ t: 'station', name: (info && info.name) || '', id: (info && info.id) || '' }, '*'); });
-    ev.on('routeComplete', function (e, info) { parent.postMessage({ t: 'routeResult', data: (info && (info.data || info.info)) || info || null }, '*'); });
-  }
-  parent.postMessage({ t: 'loaded' }, '*');
-};
-window.addEventListener('message', function (ev) {
-  var d = ev.data || {};
-  if (d.t === 'city' && window.__inst) { try { window.__inst.setAdcode(String(d.adcode || '1100')); } catch (e) { /* 忽略 */ } }
-  if (d.t === 'route' && window.__inst) { try { window.__inst.route(String(d.start || ''), String(d.end || ''), {}); } catch (e) { parent.postMessage({ t: 'status', ok: false, msg: '路线规划调用失败' }, '*'); } }
-});
-<\/script><script src="https://webapi.amap.com/subway?v=1.0&key=${key}&callback=__cb"><\/script></body></html>`;
-  frame.srcdoc = html;
+  frame.src = 'metro.html?v=' + Date.now(); // 同源宿主页（file:// 与 GitHub Pages 均相对解析）
   metroFrameBuilt = true;
   metroSdkState = 'loading';
+  // SDK 加载超时看门狗：12 秒未就绪给出明确提示并提供重试
+  clearTimeout(metroLoadTimer);
+  metroLoadTimer = setTimeout(() => {
+    if (metroSdkState !== 'ready') {
+      metroSdkState = 'fail';
+      metroSdkFailMsg = '地铁图 SDK 响应超时：请检查网络，或在高德开放平台控制台给该 Key 的「域名白名单」添加当前域名后重试';
+      metroStatus(metroSdkFailMsg, true);
+      const retry = $('#btn-mm-retry');
+      if (retry) retry.classList.remove('hidden');
+    }
+  }, 12000);
 }
 /* 处理地铁图 iframe 发回的消息 */
 function onMetroFrameMessage(ev) {
@@ -3292,8 +3288,15 @@ function onMetroFrameMessage(ev) {
   if (!d || !d.t) return;
   const frame = $('#metro-frame');
   if (!frame || !frame.contentWindow || ev.source !== frame.contentWindow) return;
-  if (d.t === 'loaded') {
+  if (d.t === 'frameReady') {
+    // 宿主页就绪：下发 Key 与当前城市（Key 只经 postMessage 传递，不进入 URL）
+    frame.contentWindow.postMessage({ t: 'init', key: mapCfg.key, adcode: (METRO_CITY[metroCity] || [])[0] || '1100' }, '*');
+    metroStatus('正在加载地铁图 SDK…');
+  } else if (d.t === 'loaded') {
     metroSdkState = 'ready';
+    clearTimeout(metroLoadTimer);
+    const retry = $('#btn-mm-retry');
+    if (retry) retry.classList.add('hidden');
     metroStatus(`正在加载「${metroCity}」地铁图…`);
   } else if (d.t === 'status') {
     if (d.ok) { metroStatus(`「${metroCity}」地铁图已加载：点击站点，选择设为起点/终点`); }
@@ -3301,6 +3304,8 @@ function onMetroFrameMessage(ev) {
       metroSdkState = 'fail';
       metroSdkFailMsg = d.msg || '地铁图加载失败';
       metroStatus(metroSdkFailMsg, true);
+      const retry = $('#btn-mm-retry');
+      if (retry) retry.classList.remove('hidden');
     }
   } else if (d.t === 'station') {
     const name = d.name || '';
@@ -5152,6 +5157,7 @@ function bindAll() {
   $('#btn-mm-setfrom').addEventListener('click', () => applyMetroPending('from'));
   $('#btn-mm-setto').addEventListener('click', () => applyMetroPending('to'));
   $('#btn-mm-plan').addEventListener('click', planMetroRoute);
+  $('#btn-mm-retry').addEventListener('click', metroRetry);
   $('#btn-mm-exit').addEventListener('click', exitMetroMode);
   window.addEventListener('message', onMetroFrameMessage); // 地铁图 iframe → 父页通信
   $('#btn-map-route').addEventListener('click', () => {
