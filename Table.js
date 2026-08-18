@@ -1242,18 +1242,21 @@ function stripTags(s) {
 function parseNetscapeHTML(text) {
   const out = [];
   let folder = '导入收藏夹';
-  const re = /<H3[^>]*>([\s\S]*?)<\/H3>|<A[^>]*HREF="([^"]*)"[^>]*>([\s\S]*?)<\/A>/gi;
+  let curCategory = '';
+  const re = /<H3([^>]*)>([\s\S]*?)<\/H3>|<A[^>]*HREF="([^"]*)"[^>]*>([\s\S]*?)<\/A>/gi;
   let m;
   while ((m = re.exec(text))) {
     if (m[1] !== undefined) {
-      const f = stripTags(m[1]).trim();
+      const f = stripTags(m[2]).trim();
       if (f) folder = f;
-    } else if (m[2] !== undefined) {
-      const href = m[2].trim();
+      const cm = m[1].match(/CATEGORY="([^"]*)"/i);
+      curCategory = cm ? cm[1] : '';
+    } else if (m[3] !== undefined) {
+      const href = m[3].trim();
       if (/^https?:/i.test(href)) {
-        const name = stripTags(m[3]).trim() || href;
+        const name = stripTags(m[4]).trim() || href;
         const date = ((m[0].match(/ADD_DATE="(\d+)"/i) || [])[1]) || '';
-        out.push({ id: uid(), name, url: href, folder, category: '', date });
+        out.push({ id: uid(), name, url: href, folder, category: curCategory || '', date });
       }
     }
   }
@@ -1274,6 +1277,15 @@ async function importBookmarksFile(file) {
       toast(`未识别到收藏内容（检测到 ${hrefCount} 个链接标签，文件编码 ${enc}）。请确认文件为 Edge「导出收藏夹」的 HTML 或本地 Bookmarks 文件`, 'warn');
       return;
     }
+    // 自动创建导入携带的分类（Table 导出→导入 分类无损互通）
+    let newCats = 0;
+    list.forEach(b => {
+      if (b.category && !categories.includes(b.category)) {
+        categories.push(b.category);
+        newCats++;
+      }
+    });
+    if (newCats) save(LS.categories, categories);
     const seen = new Set(bookmarks.map(b => normalizeUrl(b.url)));
     let added = 0;
     list.forEach(b => {
@@ -1520,7 +1532,7 @@ function exportEdgeHtml() {
     .sort((a, b) => a[0].localeCompare(b[0], 'zh'))
     .map(([cat, list]) => {
       list.sort((a, b) => a.name.localeCompare(b.name, 'zh', { sensitivity: 'base', numeric: true }));
-      return `        <DT><H3 ADD_DATE="${now}" LAST_MODIFIED="${now}">${escapeHtmlAttr(cat)}</H3>
+      return `        <DT><H3 ADD_DATE="${now}" LAST_MODIFIED="${now}" CATEGORY="${escapeHtmlAttr(cat)}">${escapeHtmlAttr(cat)}</H3>
         <DL><p>
 ${list.map(rowA).join('\n')}
         </DL><p>`;
