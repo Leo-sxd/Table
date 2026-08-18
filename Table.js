@@ -3197,6 +3197,225 @@ async function saveAndTestMapConfig() {
   toast('Key 测试失败：' + msg, 'warn');
 }
 
+/* ==================== 地铁图（白底线路示意图，覆盖地图区域显示） ==================== */
+let metroMode = false;         // 地铁图模式开关
+let metroCity = '北京';        // 当前城市名
+let metroFrom = '';            // 起点站点名
+let metroFromId = '';          // 起点站点 id
+let metroTo = '';              // 终点站点名
+let metroToId = '';            // 终点站点 id
+let metroPending = null;       // 刚点击的站点 {name,id}（待设为起点/终点）
+let metroSdkState = 'idle';    // idle/loading/ready/fail（iframe 内 SDK 状态）
+let metroSdkFailMsg = '';
+let metroFrameBuilt = false;   // 地铁图 iframe 是否已注入 srcdoc
+let metroRouteDone = false;    // 路线规划是否已出结果
+let metroRouteTimer = null;    // 路线规划看门狗
+/* 城市名 → [4 位 adcode, 拼音]（来源：webapi.amap.com/subway/data/citylist.json，已核实） */
+const METRO_CITY = {
+  '北京': ['1100', 'beijing'], '上海': ['3100', 'shanghai'], '广州': ['4401', 'guangzhou'], '深圳': ['4403', 'shenzhen'],
+  '成都': ['5101', 'chengdu'], '杭州': ['3301', 'hangzhou'], '武汉': ['4201', 'wuhan'], '西安': ['6101', 'xian'],
+  '重庆': ['5000', 'chongqing'], '南京': ['3201', 'nanjing'], '天津': ['1200', 'tianjin'], '苏州': ['3205', 'suzhou'],
+  '郑州': ['4101', 'zhengzhou'], '长沙': ['4301', 'changsha'], '青岛': ['3702', 'qingdao'], '大连': ['2102', 'dalian'],
+  '宁波': ['3302', 'ningbo'], '合肥': ['3401', 'hefei'], '昆明': ['5301', 'kunming'], '厦门': ['3502', 'xiamen'],
+};
+
+function metroStatus(msg, isErr) {
+  const el = $('#mm-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.toggle('err', !!isErr);
+}
+function updateMetroPicked() {
+  const el = $('#mm-picked');
+  if (el) el.innerHTML = `起点：<b>${esc(metroFrom || '—')}</b>　终点：<b>${esc(metroTo || '—')}</b>`;
+}
+/* 进入：隐藏高德地图，地图区域切换为白底地铁线路示意图 + 悬浮面板；退出：恢复地图 */
+async function toggleMetroMode() {
+  if (metroMode) { exitMetroMode(); return; }
+  if (!mapCfg.key) { toast('请先配置高德 Key', 'warn'); openMapConfigModal(); return; }
+  metroMode = true;
+  $('#metro-canvas').classList.remove('hidden');
+  $('#map-metro-panel').classList.remove('hidden');
+  updateMetroPicked();
+  updateMapStatus('地铁图模式：地图区域显示地铁线路示意图');
+  if (!metroFrameBuilt) {
+    buildMetroFrame();
+    metroStatus('正在加载地铁图…');
+  } else if (metroSdkState === 'ready') {
+    metroStatus(`「${metroCity}」地铁图已就绪：点击站点，选择设为起点/终点`);
+  } else {
+    metroStatus('正在加载地铁图…');
+  }
+}
+function exitMetroMode() {
+  metroMode = false;
+  $('#metro-canvas').classList.add('hidden');
+  $('#map-metro-panel').classList.add('hidden');
+  updateMapStatus('地铁图已退出');
+}
+/* 在 iframe 内加载高德「地铁图 JS API」：示意图被严格限制在 iframe（= 高德地图所在的矩形区域）内，不会溢出覆盖页面其他部分；父页与 iframe 用 postMessage 通信 */
+function buildMetroFrame() {
+  const frame = $('#metro-frame');
+  if (!frame) return;
+  const key = String(mapCfg.key || '').replace(/[^0-9a-zA-Z]/g, '');
+  const adcode = (METRO_CITY[metroCity] || [])[0] || '1100';
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#fff;overflow:hidden}#m{width:100%;height:100%}</style></head><body><div id="m"></div><script>
+window.__inst = null;
+window.__cb = function () {
+  if (typeof window.subway !== 'function') { parent.postMessage({ t: 'status', ok: false, msg: '地铁图 SDK 入口未出现' }, '*'); return; }
+  var inst = window.subway('m', { adcode: '${adcode}' });
+  window.__inst = inst;
+  inst.complete = function (st) {
+    if (st && st.status === 0) { parent.postMessage({ t: 'status', ok: false, msg: '地铁图加载失败（Key 无效或该城市暂无数据）' }, '*'); return; }
+    parent.postMessage({ t: 'status', ok: true, msg: 'ok' }, '*');
+  };
+  var ev = inst.event || inst;
+  if (ev && ev.on) {
+    ev.on('station.touch', function (e, info) { parent.postMessage({ t: 'station', name: (info && info.name) || '', id: (info && info.id) || '' }, '*'); });
+    ev.on('routeComplete', function (e, info) { parent.postMessage({ t: 'routeResult', data: (info && (info.data || info.info)) || info || null }, '*'); });
+  }
+  parent.postMessage({ t: 'loaded' }, '*');
+};
+window.addEventListener('message', function (ev) {
+  var d = ev.data || {};
+  if (d.t === 'city' && window.__inst) { try { window.__inst.setAdcode(String(d.adcode || '1100')); } catch (e) { /* 忽略 */ } }
+  if (d.t === 'route' && window.__inst) { try { window.__inst.route(String(d.start || ''), String(d.end || ''), {}); } catch (e) { parent.postMessage({ t: 'status', ok: false, msg: '路线规划调用失败' }, '*'); } }
+});
+<\/script><script src="https://webapi.amap.com/subway?v=1.0&key=${key}&callback=__cb"><\/script></body></html>`;
+  frame.srcdoc = html;
+  metroFrameBuilt = true;
+  metroSdkState = 'loading';
+}
+/* 处理地铁图 iframe 发回的消息 */
+function onMetroFrameMessage(ev) {
+  const d = ev.data || {};
+  if (!d || !d.t) return;
+  const frame = $('#metro-frame');
+  if (!frame || !frame.contentWindow || ev.source !== frame.contentWindow) return;
+  if (d.t === 'loaded') {
+    metroSdkState = 'ready';
+    metroStatus(`正在加载「${metroCity}」地铁图…`);
+  } else if (d.t === 'status') {
+    if (d.ok) { metroStatus(`「${metroCity}」地铁图已加载：点击站点，选择设为起点/终点`); }
+    else {
+      metroSdkState = 'fail';
+      metroSdkFailMsg = d.msg || '地铁图加载失败';
+      metroStatus(metroSdkFailMsg, true);
+    }
+  } else if (d.t === 'station') {
+    const name = d.name || '';
+    const id = d.id || '';
+    if (!name && !id) return;
+    metroPending = { name, id };
+    const el = $('#mm-station-name');
+    if (el) el.textContent = `站点：${name || id}`;
+    $('#mm-station-ops').classList.remove('hidden');
+  } else if (d.t === 'routeResult') {
+    onMetroRouteComplete(null, d.data);
+  }
+}
+/* 切换城市：postMessage 通知 iframe 内 SDK setAdcode */
+function loadMetroCity(city) {
+  metroCity = city;
+  metroFrom = metroTo = metroFromId = metroToId = '';
+  metroPending = null;
+  $('#mm-station-ops').classList.add('hidden');
+  updateMetroPicked();
+  $('#mm-result').innerHTML = '';
+  const frame = $('#metro-frame');
+  if (frame && frame.contentWindow && metroFrameBuilt) {
+    frame.contentWindow.postMessage({ t: 'city', adcode: (METRO_CITY[city] || [])[0] || '' }, '*');
+    metroStatus(`正在加载「${city}」地铁图…`);
+    setTimeout(() => {
+      const el = $('#mm-status');
+      if (el && el.textContent.indexOf('正在加载') === 0) metroStatus(`「${city}」地铁图已切换：点击站点，选择设为起点/终点`);
+    }, 3000);
+  } else if (metroSdkState === 'fail') {
+    metroStatus(metroSdkFailMsg, true);
+  } else {
+    metroStatus(`已选择「${city}」，地铁图加载完成后自动显示`);
+  }
+}
+function applyMetroPending(mode) {
+  if (!metroPending) return toast('请先点击一个站点', 'warn');
+  if (mode === 'to') { metroTo = metroPending.name; metroToId = metroPending.id; }
+  else { metroFrom = metroPending.name; metroFromId = metroPending.id; }
+  updateMetroPicked();
+  toast(`${mode === 'to' ? '终点' : '起点'}已设为：${metroPending.name || metroPending.id}`);
+}
+/* 最省时路径：postMessage 通知 iframe 内 SDK route(起点,终点,{})（传站点 id 或中文名），结果经 routeResult 消息返回；15 秒无响应回退高德换乘规划 */
+async function planMetroRoute() {
+  if (!metroFrom && !metroFromId) return toast('请先点击站点并「设为起点」', 'warn');
+  if (!metroTo && !metroToId) return toast('请先点击站点并「设为终点」', 'warn');
+  if (metroFromId ? metroFromId === metroToId : metroFrom === metroTo) return toast('起点与终点相同', 'warn');
+  if (metroSdkState !== 'ready') return planMetroRouteFallback();
+  const frame = $('#metro-frame');
+  if (!frame || !frame.contentWindow) return planMetroRouteFallback();
+  const start = metroFromId || metroFrom;
+  const end = metroToId || metroTo;
+  metroStatus(`正在计算 ${metroFrom || start} → ${metroTo || end} 最省时路径…`);
+  $('#mm-result').innerHTML = '';
+  metroRouteDone = false;
+  frame.contentWindow.postMessage({ t: 'route', start, end }, '*');
+  clearTimeout(metroRouteTimer);
+  metroRouteTimer = setTimeout(() => {
+    if (!metroRouteDone) { metroRouteDone = true; metroStatus('地铁图路线规划无响应，改用高德换乘规划…'); planMetroRouteFallback(); }
+  }, 15000);
+}
+function onMetroRouteComplete(e, info) {
+  if (metroRouteDone) return;
+  metroRouteDone = true;
+  clearTimeout(metroRouteTimer);
+  const rendered = tryRenderMetroSdkResult(info);
+  if (rendered) { metroStatus(`已给出 ${metroFrom || '起点'} → ${metroTo || '终点'} 的推荐路线`); }
+  else { metroStatus('路线结果解析失败，改用高德换乘规划…'); planMetroRouteFallback(); }
+}
+/* 渲染 SDK 路线结果：info.data.buslist[0].segmentlist[] = [{busid,startname,endname,passdepotname}]（SDK 只给出 buslist[0] 一条最优线路，并在示意图上绘制路线；用时字段官方未文档化，不展示臆测值） */
+function tryRenderMetroSdkResult(info) {
+  const data = (info && (info.data || (info.info && info.info.data))) || info || null;
+  const buslist = data && data.buslist;
+  const bus = Array.isArray(buslist) ? buslist[0] : null;
+  const segs = bus && bus.segmentlist;
+  if (!Array.isArray(segs) || !segs.length) return false;
+  const box = $('#mm-result');
+  if (!box) return true;
+  const rows = segs.map(sg => {
+    const lineName = sg.busid || '线路';
+    const from = sg.startname || '';
+    const to = sg.endname || '';
+    const pass = String(sg.passdepotname || '').split(/[|、,]/).filter(Boolean);
+    const passTxt = pass.length ? `（途经 ${pass.join('、')}）` : '';
+    return `${lineName}：${from} → ${to}${passTxt}`;
+  });
+  box.innerHTML = `<div class="metro-route-card best">
+    <div class="metro-route-head"><span class="tag">🏆 推荐路线</span><span class="time">共 ${segs.length} 条线路 · 换乘 ${Math.max(0, segs.length - 1)} 次</span></div>
+    <div class="metro-route-seg">${rows.map(esc).join('<br>')}</div>
+  </div>`;
+  return true;
+}
+/* 兜底：SDK 路线不可用时退出地铁图，回地图页做高德换乘规划（地铁优先，官方用时） */
+async function planMetroRouteFallback() {
+  try {
+    metroStatus('改用高德换乘规划（地铁优先）…');
+    const g1 = await amapGet('geocode/geo', { address: `${metroCity}地铁${metroFrom}站` });
+    const g2 = await amapGet('geocode/geo', { address: `${metroCity}地铁${metroTo}站` });
+    const p1 = g1 && g1.geocodes && g1.geocodes[0];
+    const p2 = g2 && g2.geocodes && g2.geocodes[0];
+    if (!p1 || !p2) { metroStatus('未能在地图上定位这两个站点，请确认站点名正确', true); return; }
+    const [lng1, lat1] = String(p1.location).split(',').map(Number);
+    const [lng2, lat2] = String(p2.location).split(',').map(Number);
+    exitMetroMode();
+    const res = await planRouteCore(
+      { lng: lng1, lat: lat1, name: `${metroFrom}站`, adcode: p1.adcode || '' },
+      { lng: lng2, lat: lat2, name: `${metroTo}站`, adcode: p2.adcode || '' },
+      'metro'
+    );
+    if (res && res.error) toast(res.error, 'warn');
+  } catch (e) {
+    metroStatus('路径规划失败：' + (e.message || e), true);
+  }
+}
+
 /* ==================== 多开器 ==================== */
 function renderMultiGroups() {
   const sel = $('#multi-group');
@@ -4925,6 +5144,16 @@ function bindAll() {
 
   // 测距与路径规划
   $('#btn-map-ruler').addEventListener('click', toggleRanging);
+  // 地铁图（白底线路示意图覆盖地图区域显示）
+  $('#btn-map-metro').addEventListener('click', toggleMetroMode);
+  $('#mm-city').addEventListener('change', e => {
+    if (metroMode) loadMetroCity(e.target.value);
+  });
+  $('#btn-mm-setfrom').addEventListener('click', () => applyMetroPending('from'));
+  $('#btn-mm-setto').addEventListener('click', () => applyMetroPending('to'));
+  $('#btn-mm-plan').addEventListener('click', planMetroRoute);
+  $('#btn-mm-exit').addEventListener('click', exitMetroMode);
+  window.addEventListener('message', onMetroFrameMessage); // 地铁图 iframe → 父页通信
   $('#btn-map-route').addEventListener('click', () => {
     $('#route-origin').value = '';
     $('#route-dest').value = '';

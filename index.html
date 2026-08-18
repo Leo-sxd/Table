@@ -204,6 +204,7 @@
             <button class="btn ghost" id="btn-fence-add">⛓️ 电子围栏</button>
             <button class="btn ghost" id="btn-map-ruler">📏 测距</button>
             <button class="btn ghost" id="btn-map-route">🧭 路径规划</button>
+            <button class="btn ghost" id="btn-map-metro">🚇 地铁图</button>
             <button class="btn ghost" id="btn-map-config">⚙️ Key 配置</button>
             <button class="btn ghost" id="btn-map-full">⛶ 全屏</button>
           </div>
@@ -211,6 +212,9 @@
         <div class="map-layout">
           <div class="card map-wrap">
             <div id="map-container"></div>
+            <div id="metro-canvas" class="metro-canvas hidden">
+              <iframe id="metro-frame" class="metro-frame" title="地铁图"></iframe>
+            </div>
             <div id="map-draw-banner" class="map-draw-banner hidden">
               <span id="map-draw-text">正在绘制围栏…</span>
               <button class="btn primary btn-sm hidden" id="map-draw-done">✅ 完成</button>
@@ -219,6 +223,30 @@
             <div id="map-route-banner" class="map-draw-banner map-route-banner hidden">
               <span id="map-route-text">正在选择起点…</span>
               <button class="btn ghost btn-sm" id="map-route-cancel">取消</button>
+            </div>
+            <div id="map-metro-panel" class="map-metro-panel hidden">
+              <div class="mm-head">🚇 地铁图</div>
+              <div class="mm-row">
+                <select id="mm-city" title="选择城市，加载该城市地铁线路图">
+                  <option>北京</option><option>上海</option><option>广州</option><option>深圳</option>
+                  <option>成都</option><option>杭州</option><option>武汉</option><option>西安</option>
+                  <option>重庆</option><option>南京</option><option>天津</option><option>苏州</option>
+                  <option>郑州</option><option>长沙</option><option>青岛</option><option>大连</option>
+                  <option>宁波</option><option>合肥</option><option>昆明</option><option>厦门</option>
+                </select>
+              </div>
+              <div class="mm-row hidden" id="mm-station-ops">
+                <span id="mm-station-name" class="mm-station-name">站点：—</span>
+                <button class="btn primary btn-sm" id="btn-mm-setfrom">设为起点</button>
+                <button class="btn ghost btn-sm" id="btn-mm-setto">设为终点</button>
+              </div>
+              <div class="mm-row2">
+                <span id="mm-picked">起点：—　终点：—</span>
+                <button class="btn primary btn-sm" id="btn-mm-plan">🚀 最省时</button>
+                <button class="btn ghost btn-sm" id="btn-mm-exit">✕</button>
+              </div>
+              <div id="mm-status" class="mm-status">加载中…</div>
+              <div id="mm-result" class="mm-result"></div>
             </div>
           </div>
           <div class="card map-side">
