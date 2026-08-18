@@ -16,10 +16,12 @@
         <button class="nav-item" data-page="usage">💰 用量</button>
         <button class="nav-item" data-page="schedule">📅 课程表</button>
         <button class="nav-item" data-page="bookmarks">🔖 收藏夹</button>
+        <button class="nav-item" data-page="focus">🍅 专注</button>
         <button class="nav-item" data-page="tasks">✅ 待办</button>
         <button class="nav-item" data-page="gantt">📊 规划</button>
         <button class="nav-item" data-page="map">🗺️ 地图</button>
         <button class="nav-item" data-page="multi">🖥️ 多开器</button>
+        <button class="nav-item" data-page="paper">📝 论文</button>
       </nav>
       <div class="side-foot">数据保存在本地浏览器<br />v1.0 测试版 · DeepSeek 驱动</div>
     </aside>
@@ -63,6 +65,7 @@
                 <button data-import="template">⬇ 下载 CSV 模板</button>
               </div>
             </div>
+            <button class="btn ghost" id="btn-export-ics">📅 导出 ICS</button>
             <button class="btn primary" id="btn-add-course">＋ 添加课程</button>
             <button class="btn ghost danger" id="btn-clear-courses">🗑 清空课表</button>
           </div>
@@ -289,6 +292,95 @@
           </div>
         </div>
         <div id="multi-grid" class="multi-grid layout-2"></div>
+      </section>
+
+      <!-- ============ 页面：专注（番茄钟） ============ -->
+      <section id="page-focus" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>🍅 番茄钟专注</h1>
+            <p class="sub" id="focus-status-line">专注 25 分钟 · 休息 5 分钟 · 每 4 轮长休息 15 分钟</p>
+          </div>
+          <div class="head-controls">
+            <label class="inline-field">关联规划事件
+              <select id="focus-event" style="min-width:150px"></select>
+            </label>
+            <label class="inline-field">专注(分)<input id="focus-min" type="number" min="1" max="180" style="width:62px" /></label>
+            <label class="inline-field">休息(分)<input id="focus-break" type="number" min="1" max="60" style="width:62px" /></label>
+            <label class="inline-field">长休息(分)<input id="focus-long" type="number" min="1" max="60" style="width:62px" /></label>
+            <button class="btn ghost" id="btn-focus-reset">🔁 重置</button>
+            <button class="btn ghost danger hidden" id="btn-focus-stop">⏹ 结束本轮</button>
+          </div>
+        </div>
+
+        <div class="focus-grid">
+          <div class="card focus-timer-card">
+            <div class="focus-mode" id="focus-mode">🍅 专注</div>
+            <div class="focus-ring" id="focus-ring">
+              <svg viewBox="0 0 220 220">
+                <circle class="fr-bg" cx="110" cy="110" r="96"></circle>
+                <circle class="fr-bar" id="focus-ring-bar" cx="110" cy="110" r="96"></circle>
+              </svg>
+              <div class="fr-center">
+                <div class="fr-time" id="focus-time">25:00</div>
+                <div class="fr-sub" id="focus-sub">准备开始</div>
+              </div>
+            </div>
+            <div class="focus-rounds" id="focus-rounds"></div>
+            <div class="focus-ctrl">
+              <button class="btn primary btn-lg" id="btn-focus-toggle">▶ 开始专注</button>
+              <button class="btn ghost btn-lg" id="btn-focus-skip">⏭ 跳过</button>
+            </div>
+          </div>
+
+          <div class="focus-side">
+            <div class="card">
+              <div class="card-head"><h2>专注统计</h2><span class="card-hint">今日 / 本周 / 累计</span></div>
+              <div class="focus-stat-grid">
+                <div class="focus-stat"><b id="focus-today-min">0</b><span>今日专注(分)</span></div>
+                <div class="focus-stat"><b id="focus-today-count">0</b><span>今日🍅数</span></div>
+                <div class="focus-stat"><b id="focus-week-min">0</b><span>本周(分)</span></div>
+                <div class="focus-stat"><b id="focus-total-min">0</b><span>累计(分)</span></div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>近 14 天专注热力</h2><span class="card-hint">颜色越深专注越久</span></div>
+              <div class="focus-heat" id="focus-heat"></div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>按规划事件投入</h2><span class="card-hint">与规划页甘特事件联动</span></div>
+              <div class="focus-by-event" id="focus-by-event"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 页面：论文撰写 ============ -->
+      <section id="page-paper" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>📝 论文撰写</h1>
+            <p class="sub" id="paper-status">自动保存 · <span id="paper-count">0 字</span></p>
+          </div>
+          <div class="head-controls">
+            <input id="paper-title" class="paper-title-input" placeholder="论文标题（可选）…" maxlength="200" />
+            <label class="inline-field">字号
+              <select id="paper-size" style="width:132px"></select>
+            </label>
+            <label class="inline-field">字体
+              <select id="paper-font" style="width:190px"></select>
+            </label>
+            <button class="btn ghost" id="btn-paper-bold" title="先选中文字，再点此按钮（或 Ctrl+B）">𝐁 加粗</button>
+            <button class="btn ghost" id="btn-paper-copy" title="复制全文（粘贴到 Word 等软件保留加粗格式）">📋 复制</button>
+            <button class="btn ghost" id="btn-paper-word" title="下载 Word 文档（.doc），用 Word 打开后格式 100% 保留，不受粘贴模式影响">⬇ 导出 Word</button>
+            <button class="btn ghost" id="btn-paper-voice">🎤 语音输入 (Alt+V)</button>
+            <button class="btn ghost danger" id="btn-paper-clear">🗑 清空</button>
+          </div>
+        </div>
+        <div class="paper-wrap">
+          <div id="paper-text" class="paper-editor" contenteditable="true" spellcheck="false"
+               data-placeholder="在这里撰写论文正文…（Alt+V 语音听写；选中文字后点「𝐁 加粗」或 Ctrl+B；「📋 复制」全文）"></div>
+        </div>
       </section>
 
       <!-- ============ 页面：智能体 ============ -->

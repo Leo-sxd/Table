@@ -74,6 +74,8 @@ const LS = {
   fences: 'td_fences_v1',
   multi: 'td_multi_v1',
   multiGroups: 'td_multi_groups_v1',
+  focus: 'td_focus_v1',
+  paper: 'td_paper_v1',
 };
 function load(key, def) {
   try {
@@ -101,6 +103,9 @@ let fences = load(LS.fences, []);        // 电子围栏 [{id,name,type:polygon|
 let multiState = load(LS.multi, { layout: 2, screens: [{ url: '' }, { url: '' }, { url: '' }, { url: '' }] }); // 多开器状态
 let multiGroups = load(LS.multiGroups, []); // 网址组 [{name,layout,urls[]}]
 let multiExpandIdx = null;              // 单屏放大索引（空=正常分屏）
+let focusData = load(LS.focus, { sessions: [], settings: { focusMin: 25, breakMin: 5, longMin: 15, longAfter: 4 }, timer: null }); // 番茄钟：专注记录 + 设置 + 当前计时（跨刷新恢复）
+let focusTick = null;                   // 计时器 interval 句柄
+let focusAudioCtx = null;               // Web Audio 上下文（提示音，无音频文件）
 
 /* ==================== 周次计算 ==================== */
 function weekInfo() {
@@ -154,6 +159,140 @@ function courseTime(c) {
   const en = secTime(c.endSec);
   if (!st || !en) return '';
   return st.s + '-' + en.e;
+}
+
+/* ==================== 课表导出 ICS ==================== */
+/* ICS 文本转义（反斜杠/分号/逗号/换行） */
+function icsEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+}
+/* ICS 行折行：每行 ≤75 字节（按码点边界折行，UTF-8 安全），RFC 5545 要求 */
+function icsFold(line) {
+  const out = [];
+  let cur = '', bytes = 0;
+  for (const ch of line) {
+    const cp = ch.codePointAt(0);
+    const b = cp > 0xffff ? 4 : (cp > 0x7ff ? 3 : (cp > 0x7f ? 2 : 1));
+    if (bytes + b > 75) { out.push(cur); cur = ' '; bytes = 1; }
+    cur += ch; bytes += b;
+  }
+  out.push(cur);
+  return out.join('\r\n');
+}
+function icsDateStr(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+}
+/* 浮动本地时间 YYYYMMDDTHHMMSS（不写时区，日历 App 按设备时区解析） */
+function icsDateTimeStr(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${icsDateStr(d)}T${p(d.getHours())}${p(d.getMinutes())}00`;
+}
+/* 当前 UTC 时间戳 YYYYMMDDTHHMMSSZ */
+function icsStamp() {
+  return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+/* 课程在第 w 周、星期 day(1=周一…7=周日) 的上课日期（与课表网格同口径） */
+function courseDateOf(day, w) {
+  const start = parseDate(settings.semesterStart);
+  if (!start) return null;
+  const d = new Date(start);
+  d.setDate(d.getDate() + (w - 1) * 7 + (day - 1));
+  return d;
+}
+/* 课程起止时间 {s,e}：节次时间设置 → 默认作息表 → 仍缺返回 null（导出为全天事件） */
+function courseIcsTime(c) {
+  const st = secTime(c.startSec), en = secTime(c.endSec);
+  if (st && en) return { s: st.s, e: en.e };
+  const i = (c.startSec - 1) * 2, j = (c.endSec - 1) * 2 + 1;
+  if (i >= 0 && j < DEFAULT_TIMES.length) return { s: DEFAULT_TIMES[i], e: DEFAULT_TIMES[j] };
+  return null;
+}
+function hmToDate(d, hm) {
+  const p = String(hm).split(':');
+  const nd = new Date(d);
+  nd.setHours(+p[0] || 0, +p[1] || 0, 0, 0);
+  return nd;
+}
+/* 单门课程 → VEVENT 块数组：周次等差（1/2）用 RRULE 每周重复，否则逐周生成 */
+function buildCourseIcsEvents(c) {
+  const weeks = (c.weeks || []).slice().sort((a, b) => a - b);
+  if (!weeks.length) return [];
+  const tm = courseIcsTime(c);
+  const desc = [
+    c.teacher ? '教师：' + c.teacher : '',
+    '周次：' + (c.weeksText || weeks.join(',')),
+    c.note ? '备注：' + c.note : '',
+  ].filter(Boolean).join('\\n');
+  let interval = null;
+  if (weeks.length >= 2) {
+    const d = weeks[1] - weeks[0];
+    if ((d === 1 || d === 2) && weeks.every((w, i) => i === 0 || w - weeks[i - 1] === d)) interval = d;
+  }
+  const stamp = icsStamp();
+  const mkEvent = (w, withRrule) => {
+    const d = courseDateOf(c.day, w);
+    if (!d) return null;
+    const lines = ['BEGIN:VEVENT', `UID:${c.id}${withRrule ? '' : '-w' + w}@table`, `DTSTAMP:${stamp}`];
+    if (tm) {
+      const s = hmToDate(d, tm.s), e = hmToDate(d, tm.e);
+      lines.push(`DTSTART:${icsDateTimeStr(s)}`, `DTEND:${icsDateTimeStr(e)}`);
+    } else {
+      lines.push(`DTSTART;VALUE=DATE:${icsDateStr(d)}`);
+    }
+    lines.push(`SUMMARY:${icsEscape(c.name)}`);
+    if (c.location) lines.push(`LOCATION:${icsEscape(c.location)}`);
+    if (desc) lines.push(`DESCRIPTION:${icsEscape(desc)}`);
+    if (withRrule && interval) {
+      const last = courseDateOf(c.day, weeks[weeks.length - 1]);
+      const until = tm ? icsDateTimeStr(hmToDate(last, tm.s)) : icsDateStr(last);
+      lines.push(`RRULE:FREQ=WEEKLY;INTERVAL=${interval};UNTIL=${until}`);
+    }
+    lines.push('END:VEVENT');
+    return lines.map(icsFold).join('\r\n') + '\r\n';
+  };
+  const events = [];
+  if (interval) {
+    const ev = mkEvent(weeks[0], true);
+    if (ev) events.push(ev);
+  } else {
+    for (const w of weeks) {
+      const ev = mkEvent(w, false);
+      if (ev) events.push(ev);
+    }
+  }
+  return events;
+}
+/* 导出课表为 .ics 日历文件（手机/电脑日历 App 可导入） */
+function exportScheduleIcs() {
+  const start = parseDate(settings.semesterStart);
+  if (!start || isNaN(start.getTime())) {
+    return { ok: false, error: '尚未设置开学日期，无法计算课程日期。请先在课程表页设置「开学第一天（上课）」日期后再导出' };
+  }
+  if (!courses.length) {
+    return { ok: false, error: '课表为空，没有可导出的课程。请先添加或导入课程' };
+  }
+  const blocks = [];
+  let eventCount = 0;
+  for (const c of courses) {
+    const evs = buildCourseIcsEvents(c);
+    eventCount += evs.length;
+    blocks.push(...evs);
+  }
+  if (!blocks.length) return { ok: false, error: '没有可导出的课程（请检查课程周次是否有效）' };
+  const ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Table//Schedule ICS//CN\r\nCALSCALE:GREGORIAN\r\nX-WR-CALNAME:Table 课程表\r\n'
+    + blocks.join('') + 'END:VCALENDAR\r\n';
+  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'Table课程表.ics';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  return {
+    ok: true, filename: 'Table课程表.ics', courseCount: courses.length, eventCount,
+    note: '已生成 ICS 日历文件（浏览器已开始下载）。用手机/电脑日历 App 导入后自动生成每节课日程与每周重复提醒；课程未单独设置节次时间时按常见作息表时间导出。',
+  };
 }
 
 /* ==================== 周次文本解析 ==================== */
@@ -1839,7 +1978,7 @@ function renderGantt() {
     ${sorted.map(row).join('')}
   </div></div>`;
   const now = events.filter(e => eventStatus(e) === '进行中').length;
-  stats.textContent = `共 ${events.length} 个事件 · 进行中 ${now} 个 · 红色竖线为今天 · 点击色块可编辑`;
+  stats.textContent = `共 ${events.length} 个事件 · 进行中 ${now} 个 · 红色竖线为今天 · 点击色块可编辑 · 🍅 专注投入 ${focusFmtMin(focusStats().totalMin)}`;
 }
 function openEventModal(id) {
   editingEventId = id || null;
@@ -3582,6 +3721,596 @@ function toggleMultiFullscreen() {
 }
 
 /* ==================== DeepSeek 智能体 ==================== */
+/* ==================== 番茄钟专注 ==================== */
+/* 当前阶段计划时长（秒）：专注/休息（第 longAfter 个番茄后为长休息） */
+function focusPhaseSec(mode) {
+  const s = focusData.settings;
+  if (mode === 'focus') return Math.max(1, +s.focusMin || 25) * 60;
+  const long = focusData.timer && (focusData.timer.cycleDone || 0) >= (s.longAfter || 4);
+  return Math.max(1, +(long ? s.longMin : s.breakMin) || 5) * 60;
+}
+function focusModeLabel(mode) {
+  if (mode === 'focus') return '🍅 专注';
+  const s = focusData.settings;
+  const long = focusData.timer && (focusData.timer.cycleDone || 0) >= (s.longAfter || 4);
+  return long ? '☕ 长休息' : '☕ 休息';
+}
+function focusPersist() { save(LS.focus, focusData); }
+/* Web Audio 提示音（正弦波哔声，无音频文件依赖） */
+function focusBeep(times) {
+  try {
+    if (!focusAudioCtx) focusAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = focusAudioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    let t = ctx.currentTime;
+    for (let i = 0; i < times; i++) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = i % 2 ? 660 : 880;
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t); o.stop(t + 0.3);
+      t += 0.42;
+    }
+  } catch (e) { /* 音频不可用时静默 */ }
+}
+function focusEnsureTick() {
+  if (!focusTick) focusTick = setInterval(focusTickFn, 500);
+}
+function focusTickFn() {
+  const t = focusData.timer;
+  if (!t || !t.running) return;
+  t.remainSec = Math.max(0, Math.round((t.endAt - Date.now()) / 1000));
+  renderFocus();
+  if (t.remainSec <= 0) focusPhaseDone();
+}
+/* 开始一个阶段：mode = focus | break */
+function focusStart(mode, opts) {
+  const o = opts || {};
+  const totalSec = focusPhaseSec(mode);
+  focusData.timer = {
+    mode, running: true, totalSec, remainSec: totalSec, endAt: Date.now() + totalSec * 1000,
+    eventId: o.eventId || '', eventName: o.eventName || '',
+    cycleDone: focusData.timer ? (focusData.timer.cycleDone || 0) : 0,
+  };
+  focusPersist();
+  focusEnsureTick();
+  renderFocus();
+}
+function focusPause() {
+  const t = focusData.timer;
+  if (!t || !t.running) return;
+  t.running = false;
+  t.remainSec = Math.max(0, Math.round((t.endAt - Date.now()) / 1000));
+  focusPersist();
+  renderFocus();
+}
+function focusResume() {
+  const t = focusData.timer;
+  if (!t || t.running) return;
+  t.running = true;
+  t.endAt = Date.now() + t.remainSec * 1000;
+  focusPersist();
+  focusEnsureTick();
+  renderFocus();
+}
+/* 当前阶段到时：专注→记录并进休息；休息→回到待开始（长休息后重置轮次） */
+function focusPhaseDone() {
+  const t = focusData.timer;
+  if (!t || !t.running) return;
+  const s = focusData.settings;
+  if (t.mode === 'focus') {
+    const minutes = Math.round(t.totalSec / 60);
+    focusData.sessions.push({ id: uid(), eventId: t.eventId, eventName: t.eventName, start: t.endAt - t.totalSec * 1000, end: t.endAt, minutes, createdAt: Date.now() });
+    t.cycleDone = Math.min((t.cycleDone || 0) + 1, s.longAfter || 4);
+    t.mode = 'break';
+    t.totalSec = focusPhaseSec('break');
+    t.remainSec = t.totalSec;
+    t.endAt = Date.now() + t.totalSec * 1000;
+    focusPersist();
+    focusBeep(3);
+    toast(`🍅 完成一个番茄（${minutes} 分钟）！进入${t.cycleDone >= s.longAfter ? '长' : ''}休息 ${Math.round(t.totalSec / 60)} 分钟`);
+    renderFocus();
+    return;
+  }
+  const wasLong = t.cycleDone >= (s.longAfter || 4);
+  t.cycleDone = wasLong ? 0 : t.cycleDone;
+  t.mode = 'idle';
+  t.running = false;
+  t.eventId = ''; t.eventName = '';
+  focusPersist();
+  focusBeep(2);
+  toast(wasLong ? '长休息结束，新周期开始！' : '休息结束，准备开始下一轮专注');
+  renderFocus();
+}
+/* 提前结束本轮专注（≥1 分钟才记录）；休息/空闲不记录 */
+function focusStop() {
+  const t = focusData.timer;
+  if (!t) return null;
+  const res = { mode: t.mode, minutes: 0, eventName: t.eventName };
+  if (t.mode === 'focus') {
+    const remain = t.running ? Math.max(0, Math.round((t.endAt - Date.now()) / 1000)) : t.remainSec;
+    const doneSec = t.totalSec - remain;
+    if (doneSec >= 60) {
+      const minutes = Math.round(doneSec / 60);
+      focusData.sessions.push({ id: uid(), eventId: t.eventId, eventName: t.eventName, start: t.endAt - t.totalSec * 1000, end: t.endAt - remain * 1000, minutes, createdAt: Date.now() });
+      res.minutes = minutes;
+    }
+  }
+  t.mode = 'idle'; t.running = false; t.eventId = ''; t.eventName = ''; t.cycleDone = 0;
+  focusPersist();
+  renderFocus();
+  return res;
+}
+/* 跳过当前阶段：专注→进休息（不记录）；休息→回待开始 */
+function focusSkip() {
+  const t = focusData.timer;
+  if (!t || t.mode === 'idle') return;
+  if (t.mode === 'focus') {
+    t.mode = 'break';
+    t.totalSec = focusPhaseSec('break');
+    t.remainSec = t.totalSec;
+    t.endAt = Date.now() + t.totalSec * 1000;
+    t.running = true;
+    focusEnsureTick();
+    toast('已跳过本轮专注，进入休息');
+  } else {
+    t.mode = 'idle'; t.running = false; t.eventId = ''; t.eventName = '';
+    toast('已跳过休息');
+  }
+  focusPersist();
+  renderFocus();
+}
+function focusReset() {
+  focusData.timer = null;
+  focusPersist();
+  renderFocus();
+}
+/* 页面刷新后恢复：计时中→续走；已到期→自动结算 */
+function focusRestore() {
+  const t = focusData.timer;
+  if (!t) return;
+  if (t.running) {
+    const remain = Math.round((t.endAt - Date.now()) / 1000);
+    if (remain > 0) { t.remainSec = remain; focusEnsureTick(); }
+    else focusPhaseDone();
+  }
+}
+function focusFmtMin(m) {
+  m = Math.round(m || 0);
+  if (m < 60) return m + ' 分钟';
+  const h = Math.floor(m / 60);
+  return m % 60 ? `${h} 小时 ${m % 60} 分` : `${h} 小时`;
+}
+/* 专注统计：今日/本周（周一始）/累计/按事件 */
+function focusStats() {
+  const today = todayMidnight().getTime();
+  const weekStart = today - ((new Date(today).getDay() + 6) % 7) * 86400000;
+  const agg = { todayMin: 0, todayCount: 0, weekMin: 0, totalMin: 0, byEvent: {} };
+  for (const s of focusData.sessions) {
+    const m = s.minutes || 0;
+    agg.totalMin += m;
+    if (s.start >= weekStart) agg.weekMin += m;
+    if (s.start >= today && s.start < today + 86400000) { agg.todayMin += m; agg.todayCount++; }
+    const k = s.eventName || '自由专注';
+    agg.byEvent[k] = (agg.byEvent[k] || 0) + m;
+  }
+  return agg;
+}
+function renderFocus() {
+  const s = focusData.settings;
+  const t = focusData.timer;
+  const longAfter = s.longAfter || 4;
+  // 输入框聚焦时不回填（避免打断用户输入）
+  if (document.activeElement !== $('#focus-min')) $('#focus-min').value = s.focusMin;
+  if (document.activeElement !== $('#focus-break')) $('#focus-break').value = s.breakMin;
+  if (document.activeElement !== $('#focus-long')) $('#focus-long').value = s.longMin;
+  $('#focus-status-line').textContent = `专注 ${s.focusMin} 分钟 · 休息 ${s.breakMin} 分钟 · 每 ${longAfter} 轮长休息 ${s.longMin} 分钟`;
+  // 关联事件下拉（与规划页联动）；选项未变化时不重建（避免打断下拉操作）
+  const sel = $('#focus-event');
+  const curEv = (t && t.eventId) || '';
+  const opts = '<option value="">自由专注</option>' + events.map(e => `<option value="${e.id}" ${e.id === curEv ? 'selected' : ''}>${esc(e.name)}</option>`).join('');
+  if (sel.innerHTML !== opts) sel.innerHTML = opts;
+  // 计时器环
+  const active = !!(t && t.mode !== 'idle');
+  const mode = active ? t.mode : 'focus';
+  const totalSec = active ? t.totalSec : s.focusMin * 60;
+  const remainSec = active ? (t.running ? Math.max(0, Math.round((t.endAt - Date.now()) / 1000)) : t.remainSec) : totalSec;
+  const mm = String(Math.floor(remainSec / 60)).padStart(2, '0');
+  const ss = String(remainSec % 60).padStart(2, '0');
+  $('#focus-time').textContent = `${mm}:${ss}`;
+  $('#focus-mode').textContent = focusModeLabel(mode);
+  $('#focus-mode').classList.toggle('break', mode === 'break');
+  $('#focus-ring').classList.toggle('break', mode === 'break');
+  const C = 2 * Math.PI * 96;
+  const bar = $('#focus-ring-bar');
+  bar.style.strokeDasharray = C;
+  bar.style.strokeDashoffset = C * (1 - remainSec / totalSec);
+  $('#focus-sub').textContent = !active ? '准备开始' : (t.running ? (mode === 'focus' ? (t.eventName ? '专注 · ' + t.eventName : '专注中') : '休息中') : '已暂停');
+  const tg = $('#btn-focus-toggle');
+  tg.textContent = !active ? '▶ 开始专注' : (t.running ? '⏸ 暂停' : '▶ 继续');
+  $('#btn-focus-skip').classList.toggle('hidden', !active);
+  $('#btn-focus-stop').classList.toggle('hidden', !(t && t.mode === 'focus'));
+  // 本轮番茄点
+  const cycle = t ? (t.cycleDone || 0) : 0;
+  $('#focus-rounds').innerHTML = Array.from({ length: longAfter }, (_, i) =>
+    `<span class="fr-dot${i < cycle ? ' done' : (active && mode === 'focus' && i === cycle ? ' cur' : '')}" title="第${i + 1}个番茄"></span>`).join('');
+  // 统计卡
+  const st = focusStats();
+  $('#focus-today-min').textContent = st.todayMin;
+  $('#focus-today-count').textContent = st.todayCount;
+  $('#focus-week-min').textContent = st.weekMin;
+  $('#focus-total-min').textContent = st.totalMin;
+  // 近 14 天热力图
+  const cells = [];
+  const today = todayMidnight();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400000);
+    const dayMin = focusData.sessions.filter(x => x.start >= d.getTime() && x.start < d.getTime() + 86400000).reduce((a, x) => a + (x.minutes || 0), 0);
+    const lv = dayMin <= 0 ? '' : (dayMin < 30 ? ' f1' : (dayMin < 60 ? ' f2' : (dayMin < 120 ? ' f3' : ' f4')));
+    cells.push(`<div class="fh-cell${lv}" title="${dateStr(d)} · ${dayMin} 分钟"></div>`);
+  }
+  $('#focus-heat').innerHTML = cells.join('');
+  // 按规划事件投入
+  const by = Object.entries(st.byEvent).sort((a, b) => b[1] - a[1]);
+  if (!by.length) {
+    $('#focus-by-event').innerHTML = '<div class="fbe-empty">暂无专注记录。开始第一个番茄后，这里会按规划事件累计投入时长</div>';
+  } else {
+    const mx = by[0][1];
+    $('#focus-by-event').innerHTML = by.map(([name, m]) => `<div class="fbe-row">
+      <span class="fbe-name">${esc(name)}</span>
+      <span class="fbe-bar"><span class="fbe-fill" style="width:${Math.max(6, Math.round(m / mx * 100))}%"></span></span>
+      <span class="fbe-min">${focusFmtMin(m)}</span>
+    </div>`).join('');
+  }
+  // 标签页标题倒计时
+  document.title = (active && t.running) ? `${mm}:${ss} ${mode === 'focus' ? '🍅' : '☕'} Table-Agent` : 'Table-Agent';
+}
+
+/* ==================== 论文撰写 ==================== */
+/* Word 兼容字体（值直接作为 CSS font-family 使用） */
+const PAPER_FONTS = [
+  { label: '宋体 (SimSun)', css: 'SimSun, 宋体, serif' },
+  { label: '黑体 (SimHei)', css: 'SimHei, 黑体, sans-serif' },
+  { label: '楷体 (KaiTi)', css: 'KaiTi, 楷体, serif' },
+  { label: '仿宋 (FangSong)', css: 'FangSong, 仿宋, serif' },
+  { label: '微软雅黑 (Microsoft YaHei)', css: "'Microsoft YaHei', 微软雅黑, sans-serif" },
+  { label: '等线 (DengXian)', css: 'DengXian, 等线, sans-serif' },
+  { label: '华文楷体 (STKaiti)', css: 'STKaiti, 华文楷体, serif' },
+  { label: 'Times New Roman', css: "'Times New Roman', Times, serif" },
+  { label: 'Arial', css: 'Arial, Helvetica, sans-serif' },
+  { label: 'Calibri', css: 'Calibri, Candara, sans-serif' },
+];
+/* Word 兼容字号（磅值，含中文号数对照；默认小四 12pt = 论文正文常用） */
+const PAPER_SIZES = [
+  { pt: 12, label: '小四 (12pt)' }, { pt: 10.5, label: '五号 (10.5pt)' }, { pt: 14, label: '四号 (14pt)' },
+  { pt: 9, label: '小五 (9pt)' }, { pt: 15, label: '小三 (15pt)' }, { pt: 16, label: '三号 (16pt)' },
+  { pt: 18, label: '小二 (18pt)' }, { pt: 22, label: '二号 (22pt)' }, { pt: 24, label: '小一 (24pt)' },
+  { pt: 26, label: '一号 (26pt)' }, { pt: 36, label: '小初 (36pt)' }, { pt: 42, label: '初号 (42pt)' },
+  { pt: 8, label: '8pt' }, { pt: 10, label: '10pt' }, { pt: 11, label: '11pt' }, { pt: 20, label: '20pt' },
+  { pt: 28, label: '28pt' }, { pt: 48, label: '48pt' }, { pt: 72, label: '72pt' },
+];
+let paper = load(LS.paper, { title: '', content: '', size: 12, font: 'SimSun, 宋体, serif', updatedAt: 0 });
+/* 旧版本 content 为纯文本 → 迁移为 HTML（富文本编辑器） */
+if (paper.content && !/<[a-zA-Z/]/.test(paper.content)) {
+  paper.content = paperTextToHtml(paper.content);
+}
+let paperSaveTimer = null;
+let paperRecognizing = false;
+let paperRecognition = null;
+let paperLastFinal = 0;
+
+function paperPersist() { paper.updatedAt = Date.now(); save(LS.paper, paper); }
+function paperScheduleSave() {
+  clearTimeout(paperSaveTimer);
+  paperSaveTimer = setTimeout(paperPersist, 800);
+}
+/* 纯文本 → 编辑器 HTML（转义 + 换行转 <br>） */
+function paperTextToHtml(t) {
+  return esc(t).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>');
+}
+/* 编辑器 HTML → 纯文本（复制/字数统计用） */
+function paperPlainText(html) {
+  return String(html || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(div|p|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+}
+/* 字数（不计空白，论文常用口径；基于纯文本） */
+function paperCount() { return paperPlainText(paper.content).replace(/\s/g, '').length; }
+function renderPaperStatus() {
+  const el = $('#paper-status');
+  if (!el) return;
+  el.innerHTML = paperRecognizing
+    ? '🎤 正在聆听，说出的内容将插入光标处…（Alt+V 停止）'
+    : ('自动保存 · <span id="paper-count">' + paperCount() + ' 字</span>');
+}
+function renderPaperOptions() {
+  const sz = $('#paper-size'), ft = $('#paper-font');
+  if (!sz || !ft) return;
+  if (!sz.innerHTML) sz.innerHTML = PAPER_SIZES.map(o => `<option value="${o.pt}">${o.label}</option>`).join('');
+  if (!ft.innerHTML) ft.innerHTML = PAPER_FONTS.map(o => `<option value="${esc(o.css)}">${o.label}</option>`).join('');
+  // 智能体设置的自定义字体不在预设列表时，临时补充一个选项
+  if (paper.font && ![...ft.options].some(o => o.value === paper.font)) {
+    const o = document.createElement('option');
+    o.value = paper.font;
+    o.textContent = paper.font;
+    ft.appendChild(o);
+  }
+}
+function paperApplyStyle() {
+  const ta = $('#paper-text');
+  if (!ta) return;
+  ta.style.fontSize = paper.size + 'pt';
+  ta.style.fontFamily = paper.font;
+}
+function renderPaper() {
+  renderPaperOptions();
+  const title = $('#paper-title'), ta = $('#paper-text');
+  if (title && document.activeElement !== title) title.value = paper.title;
+  if (ta && document.activeElement !== ta) ta.innerHTML = paper.content;
+  paperApplyStyle();
+  const sz = $('#paper-size'), ft = $('#paper-font');
+  if (sz) sz.value = String(paper.size);
+  if (ft) ft.value = paper.font;
+  renderPaperStatus();
+}
+/* 在编辑器光标处插入文本（语音听写用；contenteditable Range API） */
+function paperInsertAtCursor(text) {
+  const ed = $('#paper-text');
+  if (!ed) return;
+  ed.focus();
+  const sel = window.getSelection();
+  let range = null;
+  if (sel && sel.rangeCount && ed.contains(sel.anchorNode)) {
+    range = sel.getRangeAt(0);
+  } else {
+    range = document.createRange();
+    range.selectNodeContents(ed);
+    range.collapse(false); // 无选区时追加到末尾
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  range.deleteContents();
+  const node = document.createTextNode(text);
+  range.insertNode(node);
+  range.setStartAfter(node);
+  range.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  paper.content = ed.innerHTML;
+  paperPersist();
+  renderPaperStatus();
+}
+/* 追加文本到文末（智能体工具用；纯文本转义后追加） */
+function paperAppendText(text) {
+  const html = paperTextToHtml(text);
+  paper.content += (paper.content && !/<br\s*\/?>$/.test(paper.content) ? '<br>' : '') + html;
+  const ta = $('#paper-text');
+  if (ta) { ta.innerHTML = paper.content; ta.scrollTop = ta.scrollHeight; }
+  paperPersist();
+  renderPaperStatus();
+  return { ok: true, appended: text.length, totalChars: paperCount() };
+}
+function paperSetFont(size, font) {
+  let changed = false;
+  if (size >= 8 && size <= 72 && size !== paper.size) { paper.size = size; changed = true; }
+  if (font) {
+    const f = String(font).replace(/[<>]/g, '').trim().slice(0, 120);
+    if (f && f !== paper.font) { paper.font = f; changed = true; }
+  }
+  if (changed) {
+    paperPersist();
+    paperApplyStyle();
+    renderPaper();
+  }
+}
+function paperClearContent() {
+  paper.content = '';
+  paperPersist();
+  const ta = $('#paper-text');
+  if (ta && document.activeElement !== ta) ta.innerHTML = '';
+  renderPaperStatus();
+}
+/* 选中文字加粗/取消加粗（contenteditable + execCommand('bold')） */
+function paperToggleBold() {
+  const ed = $('#paper-text');
+  if (!ed) return;
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !ed.contains(sel.anchorNode)) {
+    toast('请先用鼠标选中要加粗的文字，再点「𝐁 加粗」（或在编辑框内用 Ctrl+B）', 'warn');
+    return;
+  }
+  ed.focus();
+  document.execCommand('bold');
+  paper.content = ed.innerHTML;
+  paperPersist();
+  renderPaperStatus();
+}
+/* 一键复制全文：优先双格式剪贴板（粘贴到 Word 保留加粗），失败回退 execCommand */
+/* 剪贴板包装样式：把当前字号/字体写入内联样式，保证 Word 粘贴对齐（否则 Word 会用默认字体字号） */
+function paperCopyStyle() {
+  const f = String(paper.font || '').replace(/[<>";]/g, '').trim() || 'SimSun';
+  const s = Math.max(8, Math.min(72, +paper.size || 12));
+  return 'font-family:' + f + ';font-size:' + s + 'pt;';
+}
+/* 剪贴板片段（body 部分）：span 内联样式包裹 + CF_HTML 片段标记 */
+function paperCopyBody() {
+  return '<!--StartFragment--><span style="' + paperCopyStyle() + '">' + paper.content + '</span><!--EndFragment-->';
+}
+/* 完整剪贴板 HTML：Word/Office 粘贴保真 */
+function paperCopyHtml() {
+  return '<html><head><meta charset="utf-8"></head><body>' + paperCopyBody() + '</body></html>';
+}
+/* RTF 文本转义（中文/emoji → \uN? 转义，>32767 按规范写负数） */
+function rtfEscape(t) {
+  return String(t)
+    .replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}')
+    .replace(/[^\x00-\x7E]/gu, ch => {
+      const c = ch.codePointAt(0);
+      return '\\u' + (c > 32767 ? c - 65536 : c) + '?';
+    });
+}
+/* 论文内容 HTML → RTF（Word 原生格式，粘贴时 Word 最优先读取；字体/字号/加粗无歧义） */
+function paperCopyRtf(html) {
+  const src = html === undefined ? paper.content : String(html);
+  const s = Math.max(8, Math.min(72, +paper.size || 12)) * 2; // RTF \fs 为半磅：42pt → 84
+  const fam = String(paper.font || '').split(',')[0].replace(/['"]/g, '').trim() || 'SimSun';
+  const dec = t => String(t)
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'");
+  let out = '';
+  const tokens = String(src).split(/(<br\s*\/?>|<\/?(?:b|div|p|li)>)/gi);
+  for (const tk of tokens) {
+    if (!tk) continue;
+    const low = tk.toLowerCase();
+    if (/^<br/.test(low)) out += '\\par ';
+    else if (low === '<b>') out += '\\b ';
+    else if (low === '</b>') out += '\\b0 ';
+    else if (/^<\/(?:div|p|li)>/.test(low)) out += '\\par ';
+    else if (tk.startsWith('<')) continue;
+    else out += rtfEscape(dec(tk));
+  }
+  return '{\\rtf1\\ansi\\ansicpg936\\uc1\\deff0{\\fonttbl{\\f0\\fnil\\fcharset134 ' + fam + ';}}\\f0\\fs' + s + ' ' + out + '}';
+}
+/* 兼容复制：离屏 contenteditable 装载同一份带样式 HTML 后 execCommand('copy')（内联样式会被 Chrome 序列化进剪贴板；copy 事件里补写 RTF） */
+function paperCopyViaExec(body, rtf) {
+  const host = document.createElement('div');
+  host.contentEditable = 'true';
+  host.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+  host.innerHTML = body;
+  if (rtf) {
+    host.addEventListener('copy', e => { try { e.clipboardData.setData('text/rtf', rtf); } catch (err) { /* 忽略 */ } });
+  }
+  document.body.appendChild(host);
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(host);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(host);
+  sel.removeAllRanges();
+  return ok;
+}
+async function paperCopyAll() {
+  const ed = $('#paper-text');
+  if (!ed) return;
+  const text = paperPlainText(paper.content);
+  if (!text.trim()) return toast('论文内容为空，无可复制', 'warn');
+  const html = paperCopyHtml();
+  const body = paperCopyBody();
+  const rtf = paperCopyRtf();
+  try {
+    if (navigator.clipboard && window.ClipboardItem && navigator.clipboard.write) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/rtf': new Blob([rtf], { type: 'text/rtf' }),
+            'text/plain': new Blob([text], { type: 'text/plain;charset=utf-8' }),
+          }),
+        ]);
+      } catch (eRtf) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([text], { type: 'text/plain;charset=utf-8' }),
+          }),
+        ]);
+      }
+      toast('已复制（HTML+RTF 双格式）。Word 粘贴请选「保留源格式」；若仍不对齐，请用「⬇ 导出 Word」打开文件（100% 保真）');
+      return;
+    }
+  } catch (e) { /* 剪贴板 API 不可用 → 兼容复制（同一份带样式 HTML + RTF） */ }
+  if (paperCopyViaExec(body, rtf)) toast('已复制（兼容模式）。Word 粘贴请选「保留源格式」；若仍不对齐，请用「⬇ 导出 Word」');
+  else toast('复制失败，请手动 Ctrl+A 后 Ctrl+C', 'warn');
+}
+/* 导出 Word 兼容文档（HTML 结构 .doc）：Word 打开即完整格式，与粘贴模式无关——100% 保真的兜底路径 */
+function paperExportWord() {
+  const s = Math.max(8, Math.min(72, +paper.size || 12));
+  const fam = String(paper.font || '').replace(/[<>"]/g, '').trim() || 'SimSun';
+  const title = String(paper.title || '论文').replace(/[\\/:*?"<>|]/g, '').trim() || '论文';
+  const doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">'
+    + '<head><meta charset="utf-8"><title>' + esc(paper.title || '') + '</title>'
+    + '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->'
+    + '<style>@page{size:595.3pt 841.9pt;margin:72pt 72pt 72pt 72pt;}div.WordSection1{page:WordSection1;}'
+    + 'body,div.TablePaper{font-family:' + fam + ';font-size:' + s + 'pt;line-height:1.9;}'
+    + 'b,strong{font-weight:bold;}</style></head>'
+    + '<body><div class="WordSection1"><div class="TablePaper">' + paper.content + '</div></div></body></html>';
+  const blob = new Blob(['\uFEFF' + doc], { type: 'application/msword;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = title + '.doc';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast('已导出 Word 文档「' + a.download + '」，用 Word 打开后字体字号与加粗完整保留');
+}
+
+/* 论文页语音听写（Alt+V，与智能体语音互斥） */
+function resetPaperVoiceUI() {
+  paperRecognizing = false;
+  paperRecognition = null;
+  const btn = $('#btn-paper-voice');
+  if (btn) { btn.classList.remove('listening'); btn.textContent = '🎤 语音输入 (Alt+V)'; }
+  renderPaperStatus();
+}
+function stopPaperVoice() {
+  if (paperRecognition) { try { paperRecognition.stop(); } catch (e) { /* 忽略 */ } }
+}
+function togglePaperVoice() {
+  if (!speechSupported()) { toast('当前浏览器不支持语音识别，请使用 Edge / Chrome', 'warn'); return; }
+  if (paperRecognizing) { stopPaperVoice(); return; }
+  if (recognizing) stopVoice(); // 互斥：启动论文听写前停掉智能体语音
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  paperRecognition = new SR();
+  paperRecognition.lang = 'zh-CN';
+  paperRecognition.interimResults = true;
+  paperRecognition.continuous = true;   // 长文听写：连续识别，逐段插入光标处
+  paperRecognition.maxAlternatives = 1;
+  paperLastFinal = 0;
+  const btn = $('#btn-paper-voice');
+  paperRecognition.onstart = () => {
+    paperRecognizing = true;
+    btn.classList.add('listening');
+    btn.textContent = '🔴 聆听中 (Alt+V 停止)';
+    renderPaperStatus();
+  };
+  paperRecognition.onresult = e => {
+    for (let i = paperLastFinal; i < e.results.length; i++) {
+      const res = e.results[i];
+      if (res.isFinal) {
+        paperLastFinal = i + 1;
+        const text = (res[0].transcript || '').trim();
+        if (text) paperInsertAtCursor(text);
+      }
+    }
+  };
+  paperRecognition.onerror = e => {
+    resetPaperVoiceUI();
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('麦克风权限被拒绝，请在浏览器地址栏允许麦克风访问后重试', 'warn');
+    else if (e.error === 'no-speech') toast('没有听到语音，请靠近麦克风重试', 'warn');
+    else if (e.error !== 'aborted') toast('语音识别出错：' + e.error, 'warn');
+  };
+  paperRecognition.onend = resetPaperVoiceUI;
+  try {
+    paperRecognition.start();
+  } catch (err) {
+    resetPaperVoiceUI();
+    toast('启动语音识别失败：' + (err.message || err), 'err');
+  }
+}
+
 const TOOLS = [
   { type: 'function', function: { name: 'get_current_week', description: '获取当前是第几周、今天是星期几、开学日期等信息', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'get_schedule', description: '获取某一周的课程表（week 不传则返回当前周）', parameters: { type: 'object', properties: { week: { type: 'number', description: '第几周' } } } } },
@@ -3601,6 +4330,7 @@ const TOOLS = [
   { type: 'function', function: { name: 'set_semester_start', description: '设置本学期开学第一天（上课）日期，格式 YYYY-MM-DD，影响当前周计算', parameters: { type: 'object', properties: { date: { type: 'string', description: '如 2026-08-31' } }, required: ['date'] } } },
   { type: 'function', function: { name: 'set_section_time', description: '设置某一节次的上课时间，时间格式 HH:MM，如 08:00 和 08:45', parameters: { type: 'object', properties: { section: { type: 'number', description: '第几节(1-14)' }, start: { type: 'string' }, end: { type: 'string' } }, required: ['section', 'start', 'end'] } } },
   { type: 'function', function: { name: 'fill_default_section_times', description: '按常见作息表一键填充所有节次时间（8:00起）', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'export_schedule_ics', description: '将当前课程表导出为 ICS 日历文件（下载后用手机/电脑日历 App 导入，自动生成每节课日程与每周重复）', parameters: { type: 'object', properties: {} } } },
   { type: 'function', function: { name: 'delete_bookmark', description: '删除收藏夹中的某个网站', parameters: { type: 'object', properties: { keyword: { type: 'string' } }, required: ['keyword'] } } },
   { type: 'function', function: { name: 'rename_bookmark', description: '修改收藏网站的名称', parameters: { type: 'object', properties: { keyword: { type: 'string', description: '原名称或网址关键词' }, new_name: { type: 'string' } }, required: ['keyword', 'new_name'] } } },
   { type: 'function', function: { name: 'add_category', description: '新建一个收藏分类', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
@@ -3637,7 +4367,14 @@ const TOOLS = [
   { type: 'function', function: { name: 'multi_save_group', description: '把当前多开器分屏保存为网址组', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'multi_load_group', description: '加载已保存的网址组', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } },
   { type: 'function', function: { name: 'multi_expand', description: '将某一屏放大占据整个多开器工作区（index 1-4）', parameters: { type: 'object', properties: { index: { type: 'number' } }, required: ['index'] } } },
-  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['agent', 'usage', 'schedule', 'bookmarks', 'tasks', 'gantt', 'map', 'multi'] } }, required: ['page'] } } },
+  { type: 'function', function: { name: 'focus_start', description: '开始一个番茄钟专注计时（自动切到专注页）。event 可选：关联规划事件名称关键词；minutes 可选：专注分钟数（默认 25，范围 1-180）', parameters: { type: 'object', properties: { event: { type: 'string' }, minutes: { type: 'number' } } } } },
+  { type: 'function', function: { name: 'focus_stop', description: '结束当前进行中的专注并记录已专注时长（不足 1 分钟不记录）', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'focus_status', description: '查询番茄钟状态（是否进行中、剩余时间、关联事件）与专注统计（今日/本周/累计时长、按规划事件投入）', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'paper_get', description: '读取论文撰写页当前内容：标题、字数、开头与结尾摘要、字号/字体设置', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'paper_append', description: '向论文撰写页文本框追加文本（自动另起一行，追加到文末）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要追加的文本内容' } }, required: ['text'] } } },
+  { type: 'function', function: { name: 'paper_set_font', description: '设置论文文本框的字号与字体（Word 兼容）。size 为磅值 8-72（如 12=小四/10.5=五号/14=四号/16=三号）；font 为字体名（宋体/黑体/楷体/仿宋/微软雅黑/等线/Times New Roman/Arial/Calibri 等）', parameters: { type: 'object', properties: { size: { type: 'number' }, font: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'paper_clear', description: '清空论文撰写页文本框的全部内容（慎用）', parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper'] } }, required: ['page'] } } },
   { type: 'function', function: { name: 'get_settings', description: '获取看板设置（开学日期、节数等）', parameters: { type: 'object', properties: {} } } },
 ];
 const TOOL_LABELS = {
@@ -3647,7 +4384,7 @@ const TOOL_LABELS = {
   delete_course: '删除课程', show_page: '切换页面', get_settings: '读取设置',
   view_week: '跳转查看周课表', edit_course: '编辑课程', clear_courses: '清空课表',
   open_course_import: '打开课表导入', set_semester_start: '设置开学日期', set_section_time: '设置节次时间',
-  fill_default_section_times: '填充默认节次时间', delete_bookmark: '删除收藏', rename_bookmark: '重命名收藏',
+  fill_default_section_times: '填充默认节次时间', export_schedule_ics: '导出课表ICS', delete_bookmark: '删除收藏', rename_bookmark: '重命名收藏',
   add_category: '新建分类', rename_category: '重命名分类', delete_category: '删除分类',
   dedupe_bookmarks: '收藏去重', import_bookmarks: '导入收藏', export_bookmarks: '导出收藏',
   filter_bookmarks: '筛选收藏', clear_chat: '新建对话', start_voice: '启动语音',
@@ -3659,6 +4396,8 @@ const TOOL_LABELS = {
   locate_fence: '定位围栏', delete_fence: '删除围栏', start_fence_draw: '新建围栏', map_fullscreen: '切换全屏',
   multi_open: '多开器打开', multi_list: '多开器状态', multi_save_group: '保存网址组',
   multi_load_group: '加载网址组', multi_expand: '单屏放大',
+  focus_start: '开始专注', focus_stop: '结束专注', focus_status: '专注统计',
+  paper_get: '读取论文', paper_append: '论文追加文本', paper_set_font: '论文格式', paper_clear: '清空论文',
 };
 
 function findBookmark(keyword) {
@@ -3857,9 +4596,74 @@ async function executeTool(name, args) {
       renderMulti();
       return { ok: true, expanded: idx + 1, url: (multiState.screens[idx] && multiState.screens[idx].url) || '' };
     }
+    case 'focus_start': {
+      const kw = String((args && args.event) || '').trim();
+      let ev = null;
+      if (kw) ev = events.find(x => x.name === kw) || events.find(x => x.name.includes(kw));
+      if (kw && !ev) return { error: `未找到规划事件「${kw}」（可先用 add_event 添加，或留空不关联事件）` };
+      let minutes = +(args && args.minutes);
+      if (!(minutes >= 1 && minutes <= 180)) minutes = 0;
+      if (minutes) { focusData.settings.focusMin = minutes; focusPersist(); }
+      focusStart('focus', ev ? { eventId: ev.id, eventName: ev.name } : {});
+      switchPage('focus');
+      const t = focusData.timer;
+      return { ok: true, mode: 'focus', minutes: Math.round(t.totalSec / 60), eventName: ev ? ev.name : '自由专注', note: '已开始专注计时，倒计时结束后会自动记录并进入休息' };
+    }
+    case 'focus_stop': {
+      const t = focusData.timer;
+      if (!t || t.mode !== 'focus') return { error: '当前没有进行中的专注' };
+      const r = focusStop();
+      return { ok: true, recorded: r.minutes, eventName: r.eventName || '自由专注', note: r.minutes ? `已结束本轮并记录 ${r.minutes} 分钟专注` : '已结束本轮（不足 1 分钟，未记录）' };
+    }
+    case 'focus_status': {
+      const t = focusData.timer;
+      const st = focusStats();
+      const byEvent = Object.entries(st.byEvent).sort((a, b) => b[1] - a[1]).map(([name, minutes]) => ({ name, minutes }));
+      const active = !!(t && t.mode !== 'idle');
+      return {
+        running: !!(active && t.running),
+        mode: active ? (t.mode === 'focus' ? '专注中' : '休息中') : '空闲',
+        remainSec: active ? (t.running ? Math.max(0, Math.round((t.endAt - Date.now()) / 1000)) : t.remainSec) : 0,
+        eventName: (t && t.eventName) || '',
+        todayMin: st.todayMin, todayCount: st.todayCount, weekMin: st.weekMin, totalMin: st.totalMin,
+        byEvent,
+      };
+    }
+    case 'paper_get': {
+      const max = 300;
+      const txt = paperPlainText(paper.content);
+      const more = txt.length > max * 2;
+      return {
+        ok: true,
+        title: paper.title || '(未设置标题)',
+        totalChars: paperCount(),
+        sizePt: paper.size,
+        font: paper.font,
+        contentStart: txt.slice(0, max),
+        contentEnd: more ? txt.slice(-max) : '',
+        note: '共 ' + txt.length + ' 个字符' + (more ? '（只显示开头与结尾各 300 字）' : '（全文）') + '；可用 paper_append 追加、paper_set_font 设置格式',
+      };
+    }
+    case 'paper_append': {
+      const text = String((args && args.text) || '');
+      if (!text.trim()) return { error: '要追加的文本不能为空' };
+      return paperAppendText(text);
+    }
+    case 'paper_set_font': {
+      const size = +(args && args.size);
+      const font = String((args && args.font) || '').trim();
+      if (!(size >= 8 && size <= 72) && !font) return { error: '请提供有效字号（8-72 磅）或字体名' };
+      paperSetFont(size, font);
+      return { ok: true, sizePt: paper.size, font: paper.font, note: '论文格式已更新' };
+    }
+    case 'paper_clear': {
+      if (!paper.content) return { ok: true, cleared: 0, note: '论文内容本来就是空的' };
+      paperClearContent();
+      return { ok: true, cleared: 1, note: '论文内容已清空' };
+    }
     case 'show_page': {
       const page = args && args.page;
-      if (['agent', 'usage', 'schedule', 'bookmarks', 'tasks', 'gantt', 'map', 'multi'].includes(page)) { switchPage(page); return { ok: true, page }; }
+      if (['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper'].includes(page)) { switchPage(page); return { ok: true, page }; }
       return { error: '无效页面' };
     }
     case 'map_locate': {
@@ -4179,6 +4983,11 @@ async function executeTool(name, args) {
       renderToday();
       return { ok: true, note: '已按常见作息表填充全部节次时间' };
     }
+    case 'export_schedule_ics': {
+      const r = exportScheduleIcs();
+      if (!r.ok) return { error: r.error };
+      return r;
+    }
     case 'delete_bookmark': {
       const b = findBookmark(args && args.keyword);
       if (!b) return { error: '未找到匹配的收藏网站' };
@@ -4303,12 +5112,14 @@ function buildSystemPrompt() {
   return `你是「Table」看板的智能助手，运行在用户的本地网页里。你可以用工具直接操作系统，覆盖网页内的所有页面与功能：
 【智能体页】清空对话；启动语音输入(start_voice)。
 【用量中心】查询本看板 DeepSeek 消耗统计与官方账户余额（get_usage/refresh_balance；费用为估算值，单价可在用量中心页调整）。
-【课程表页】查询当前周/今日课程/某一周课程；跳转查看某周课表(view_week)；添加/编辑/删除课程；清空课表；打开课表导入向导(教务系统HTML/CSV/粘贴)；设置开学日期(影响当前周计算，须用户确认准确)；设置某一节次时间或填充默认节次时间。
+【课程表页】查询当前周/今日课程/某一周课程；跳转查看某周课表(view_week)；添加/编辑/删除课程；清空课表；打开课表导入向导(教务系统HTML/CSV/粘贴)；设置开学日期(影响当前周计算，须用户确认准确)；设置某一节次时间或填充默认节次时间；导出课表为 ICS 日历文件(export_schedule_ics，可导入手机/电脑日历 App)。
 【收藏夹页】搜索/打开/添加/删除/重命名收藏网站；单个或按关键词/分类批量打开网站（open_bookmark/open_bookmarks，自动打开被拦截时引导用户点聊天内按钮）；给网站设置分类；新建/重命名/删除分类；一键去重重复网址；按分类或关键词筛选显示；触发 Edge 收藏文件导入；导出 Edge 可导入的 HTML 文件。
+【专注页】番茄钟专注计时：开始专注（focus_start，可关联规划事件、自定义分钟数）；结束当前专注并记录（focus_stop）；查询进行中状态与今日/本周/累计统计、按规划事件投入（focus_status）。专注倒计时结束后自动记录并进入休息，跨页面持续运行。
 【待办页】查询/添加/完成/删除待办任务（按截止时间优先度排序；截止前1小时会自动通过「提醒」栏目提醒用户，红色圆圈角标提示新提醒）。
 【规划页】查询/添加/编辑/删除未来规划事件（甘特图显示，任务名称-开始日期-结束日期；日期格式 YYYY-MM-DD）。
 【地图页】定位当前城市（map_locate，高德IP定位）；搜索地点（map_search，POI搜索）；地址转经纬度（map_geocode，地理编码）；路径规划（map_route，驾车/步行/骑行/地铁/混合）；开启测距（map_ranging）；电子围栏管理（list_fences/locate_fence/delete_fence/start_fence_draw）；切换全屏（map_fullscreen）。需用户已在地图页「⚙️ Key 配置」填写高德 Key 并通过测试，否则提醒用户先配置。
 【多开器】同时打开多个网址分屏显示（multi_open，urls 1-4 个，layout 1/2/4）；查看分屏状态与网址组（multi_list）；保存当前分屏为网址组（multi_save_group）；加载网址组（multi_load_group）；将某一屏放大独占工作区（multi_expand，index 1-4）。注意：部分网站通过 X-Frame-Options/CSP 禁止被内嵌，iframe 会显示空白或拒绝连接，这是网站自身限制。
+【论文页】论文撰写：读取当前论文内容/字数/格式（paper_get）；向论文文本框追加文本（paper_append，自动另起一行）；设置字号磅值与字体（paper_set_font，Word 兼容：12=小四、10.5=五号、14=四号；宋体/黑体/楷体/仿宋/微软雅黑/Times New Roman/Arial/Calibri 等）；清空论文内容（paper_clear，慎用）。论文页支持 Alt+V 语音听写，文字直接插入光标处，与智能体语音互不干扰。
 【通用】切换页面(show_page)；读取看板设置与统计(get_settings)。
 今天日期：${dateStr(new Date())}，${WEEKDAYS[wi.weekday - 1]}，${wkTxt}。
 规则：
@@ -4520,6 +5331,7 @@ function toggleVoice() {
     return;
   }
   if (recognizing) { stopVoice(); return; }
+  if (paperRecognizing) stopPaperVoice(); // 互斥：启动智能体语音前停掉论文听写
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SR();
   recognition.lang = 'zh-CN';
@@ -4608,7 +5420,7 @@ async function sendVoiceText(text) {
 /* ==================== 页面切换 ==================== */
 function switchPage(page) {
   $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  ['agent', 'usage', 'schedule', 'bookmarks', 'tasks', 'gantt', 'map', 'multi'].forEach(p => {
+  ['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper'].forEach(p => {
     $('#page-' + p).classList.toggle('hidden', p !== page);
   });
   if (page === 'bookmarks') renderBookmarks();
@@ -4617,6 +5429,8 @@ function switchPage(page) {
   if (page === 'usage') renderUsage();
   if (page === 'map') initMapPage();
   if (page === 'multi') renderMulti();
+  if (page === 'focus') renderFocus();
+  if (page === 'paper') renderPaper();
   if (page === 'schedule') renderAll();
 }
 
@@ -4624,6 +5438,68 @@ function switchPage(page) {
 function bindAll() {
   // 导航
   $$('.nav-item').forEach(b => b.addEventListener('click', () => switchPage(b.dataset.page)));
+
+  // 番茄钟专注
+  $('#btn-focus-toggle').addEventListener('click', () => {
+    const t = focusData.timer;
+    if (!t || t.mode === 'idle') {
+      const sel = $('#focus-event');
+      const ev = events.find(x => x.id === sel.value);
+      focusStart('focus', ev ? { eventId: ev.id, eventName: ev.name } : {});
+      focusBeep(1);
+      toast(`🍅 专注开始，${Math.round(focusData.timer.totalSec / 60)} 分钟${ev ? ' · ' + ev.name : ''}`);
+    } else if (t.running) focusPause();
+    else focusResume();
+  });
+  $('#btn-focus-skip').addEventListener('click', focusSkip);
+  $('#btn-focus-reset').addEventListener('click', () => { focusReset(); toast('计时已重置'); });
+  $('#btn-focus-stop').addEventListener('click', () => {
+    const r = focusStop();
+    toast(r.minutes ? `已结束本轮并记录 ${r.minutes} 分钟专注` : '已结束本轮（不足 1 分钟未记录）');
+  });
+  $('#focus-min').addEventListener('change', e => { focusData.settings.focusMin = Math.max(1, Math.min(180, +e.target.value || 25)); focusPersist(); renderFocus(); });
+  $('#focus-break').addEventListener('change', e => { focusData.settings.breakMin = Math.max(1, Math.min(60, +e.target.value || 5)); focusPersist(); renderFocus(); });
+  $('#focus-long').addEventListener('change', e => { focusData.settings.longMin = Math.max(1, Math.min(60, +e.target.value || 15)); focusPersist(); renderFocus(); });
+
+  // 论文撰写
+  $('#paper-title').addEventListener('input', e => { paper.title = e.target.value; paperScheduleSave(); });
+  $('#paper-text').addEventListener('input', e => {
+    paper.content = e.target.innerHTML;
+    paperScheduleSave();
+    renderPaperStatus();
+  });
+  $('#paper-size').addEventListener('change', e => paperSetFont(+e.target.value, ''));
+  $('#paper-font').addEventListener('change', e => paperSetFont(0, e.target.value));
+  // mousedown 阻止默认：点按钮不抢焦点，编辑框内的文字选区得以保留
+  $('#btn-paper-bold').addEventListener('mousedown', e => e.preventDefault());
+  $('#btn-paper-bold').addEventListener('click', paperToggleBold);
+  $('#btn-paper-copy').addEventListener('click', paperCopyAll);
+  $('#btn-paper-word').addEventListener('click', paperExportWord);
+  // 手动 Ctrl+C 也带格式：拦截 copy 事件，改写剪贴板为带字体/字号内联样式的 HTML + RTF
+  $('#paper-text').addEventListener('copy', e => {
+    const sel = window.getSelection();
+    const ed = $('#paper-text');
+    if (!sel || sel.isCollapsed || !ed.contains(sel.anchorNode)) return;
+    const text = sel.toString();
+    if (!text.trim()) return;
+    try {
+      const tmp = document.createElement('div');
+      tmp.appendChild(sel.getRangeAt(0).cloneContents());
+      const frag = '<!--StartFragment--><span style="' + paperCopyStyle() + '">' + tmp.innerHTML + '</span><!--EndFragment-->';
+      e.clipboardData.setData('text/plain', text);
+      e.clipboardData.setData('text/rtf', paperCopyRtf(tmp.innerHTML));
+      e.clipboardData.setData('text/html', '<html><head><meta charset="utf-8"></head><body>' + frag + '</body></html>');
+      e.preventDefault();
+      toast('已复制（含字体与加粗格式）');
+    } catch (err) { /* 保持浏览器默认复制 */ }
+  });
+  $('#btn-paper-voice').addEventListener('click', togglePaperVoice);
+  $('#btn-paper-clear').addEventListener('click', () => {
+    if (!paper.content) return toast('论文内容已经是空的', 'warn');
+    if (!confirm('确定清空论文内容吗？此操作不可撤销。')) return;
+    paperClearContent();
+    toast('论文内容已清空');
+  });
 
   // 课程表
   $('#semester-start').addEventListener('change', e => {
@@ -4651,6 +5527,11 @@ function bindAll() {
     else toast('请先设置开学日期', 'warn');
   });
   $('#btn-add-course').addEventListener('click', () => openCourseModal());
+  $('#btn-export-ics').addEventListener('click', () => {
+    const r = exportScheduleIcs();
+    if (r.ok) toast(`已导出 ${r.courseCount} 门课程 → ${r.filename}（可用手机/电脑日历 App 导入）`);
+    else toast(r.error, 'warn');
+  });
   $('#btn-clear-courses').addEventListener('click', () => {
     if (!courses.length) return toast('课表已经是空的', 'warn');
     if (!confirm(`确定清空全部 ${courses.length} 门课程吗？此操作不可撤销。`)) return;
@@ -5275,8 +6156,13 @@ function bindAll() {
   document.addEventListener('keydown', e => {
     if (e.altKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
-      if ($('#page-agent').classList.contains('hidden')) switchPage('agent');
-      toggleVoice();
+      // 按工作区路由：论文页可见 → 论文语音听写；否则 → 智能体语音（两者互斥不干扰）
+      if (!$('#page-paper').classList.contains('hidden')) {
+        togglePaperVoice();
+      } else {
+        if ($('#page-agent').classList.contains('hidden')) switchPage('agent');
+        toggleVoice();
+      }
       return;
     }
     const onAgent = !$('#page-agent').classList.contains('hidden');
@@ -5333,6 +6219,8 @@ function renderAll() {
   renderGantt();
   renderUsage();
   renderMulti();
+  renderFocus();
+  renderPaper();
   updateRemindBadge();
   renderReminders();
   updateBanner();
@@ -5350,6 +6238,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#gt-zoom').value = settings.ganttZoom || 16;
 
   bindAll();
+  focusRestore();      // 恢复未完成的番茄钟计时（已到期自动结算）
   migrateUsage();      // 旧统计数据结构迁移
   migratePrices();     // 旧全局单价结构迁移为每模型单价
   migrateAgentModel(); // 已下线模型迁移（chat/reasoner → v4-flash）并清理其单价条目

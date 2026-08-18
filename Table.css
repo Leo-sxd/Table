@@ -784,6 +784,60 @@ input, select, textarea { font-family: inherit; }
 #page-multi:-webkit-full-screen { background: var(--bg); padding: 18px 22px; overflow: auto; }
 #page-multi:-webkit-full-screen .multi-grid { height: calc(100vh - 130px); min-height: 0; }
 
+/* ---------------- 番茄钟专注 ---------------- */
+.focus-grid { display: grid; grid-template-columns: 380px 1fr; gap: 14px; align-items: start; }
+.focus-timer-card { display: flex; flex-direction: column; align-items: center; padding: 22px; gap: 14px; }
+.focus-mode { font-size: 15px; font-weight: 600; color: var(--accent); }
+.focus-mode.break { color: #16a34a; }
+.focus-ring { position: relative; width: 220px; height: 220px; }
+.focus-ring svg { transform: rotate(-90deg); width: 100%; height: 100%; }
+.fr-bg { fill: none; stroke: #e7ebf5; stroke-width: 12; }
+.fr-bar { fill: none; stroke: var(--accent); stroke-width: 12; stroke-linecap: round; transition: stroke-dashoffset 0.5s linear, stroke 0.3s; }
+.focus-ring.break .fr-bar { stroke: #16a34a; }
+.fr-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.fr-time { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.fr-sub { font-size: 12.5px; color: var(--muted); max-width: 180px; text-align: center; }
+.focus-rounds { display: flex; gap: 6px; }
+.fr-dot { width: 10px; height: 10px; border-radius: 50%; background: #e2e6f0; }
+.fr-dot.done { background: var(--accent); }
+.fr-dot.cur { background: #f59e0b; }
+.focus-ctrl { display: flex; gap: 10px; }
+.focus-side { display: flex; flex-direction: column; gap: 14px; }
+.focus-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.focus-stat { background: #f6f8fd; border-radius: 10px; padding: 10px 6px; text-align: center; }
+.focus-stat b { display: block; font-size: 20px; color: var(--accent); }
+.focus-stat span { font-size: 11.5px; color: var(--muted); }
+.focus-heat { display: flex; gap: 5px; flex-wrap: wrap; }
+.fh-cell { width: 18px; height: 18px; border-radius: 4px; background: #eef1f7; }
+.fh-cell.f1 { background: #c7d3f8; }
+.fh-cell.f2 { background: #9db4f4; }
+.fh-cell.f3 { background: #6f8fef; }
+.fh-cell.f4 { background: #4f6ef7; }
+.focus-by-event { display: flex; flex-direction: column; gap: 8px; }
+.fbe-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.fbe-name { flex: 1; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fbe-bar { flex: 1; height: 8px; border-radius: 4px; background: #eef1f7; overflow: hidden; }
+.fbe-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.fbe-min { width: 92px; text-align: right; color: var(--muted); font-size: 12px; flex: none; }
+.fbe-empty { color: var(--muted); font-size: 12.5px; }
+
+/* ---------------- 论文撰写 ---------------- */
+.paper-title-input { width: 240px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; font-size: 13px; outline: none; background: #fff; color: var(--ink); }
+.paper-title-input:focus { border-color: var(--accent); }
+.paper-wrap { height: calc(100vh - 185px); min-height: 320px; }
+#paper-text {
+  width: 100%; height: 100%; box-sizing: border-box;
+  overflow: auto; resize: none;
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 24px 30px;
+  font-family: SimSun, 宋体, serif; font-size: 12pt; line-height: 1.9;
+  color: var(--ink); background: #fff; outline: none;
+}
+#paper-text:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.12); }
+#paper-text:empty::before { content: attr(data-placeholder); color: #a7aec0; }
+#paper-text b, #paper-text strong { font-weight: 700; }
+#btn-paper-voice.listening { background: #dc2626; border-color: #dc2626; color: #fff; }
+
 /* ---------------- 响应式 ---------------- */
 @media (max-width: 980px) {
   .app { flex-direction: column; }
@@ -800,4 +854,5 @@ input, select, textarea { font-family: inherit; }
   .map-layout { grid-template-columns: 1fr; height: auto; }
   .map-wrap { height: 400px; }
   .map-side { max-height: 320px; }
+  .focus-grid { grid-template-columns: 1fr; }
 }
