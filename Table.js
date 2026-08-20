@@ -5587,9 +5587,18 @@ async function sendVoiceText(text) {
 }
 
 /* ==================== 页面切换 ==================== */
+/* 移动端侧栏抽屉：打开/关闭（force 可选，不传则切换） */
+function toggleNav(force) {
+  const sb = document.querySelector('.sidebar');
+  const mask = $('#nav-mask');
+  if (!sb) return;
+  const open = force !== undefined ? !!force : !sb.classList.contains('open');
+  sb.classList.toggle('open', open);
+  if (mask) mask.classList.toggle('show', open);
+}
+
 function switchPage(page) {
-  $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  ['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper', 'settings'].forEach(p => {
+  $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));  ['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper', 'settings'].forEach(p => {
     $('#page-' + p).classList.toggle('hidden', p !== page);
   });
   if (page === 'bookmarks') renderBookmarks();
@@ -5607,7 +5616,10 @@ function switchPage(page) {
 /* ==================== 事件绑定 ==================== */
 function bindAll() {
   // 导航
-  $$('.nav-item').forEach(b => b.addEventListener('click', () => switchPage(b.dataset.page)));
+  $$('.nav-item').forEach(b => b.addEventListener('click', () => { switchPage(b.dataset.page); toggleNav(false); }));
+  // 移动端抽屉：菜单按钮与遮罩
+  $('#nav-toggle').addEventListener('click', () => toggleNav());
+  $('#nav-mask').addEventListener('click', () => toggleNav(false));
 
   // 设置页：主题皮肤切换
   $('#theme-grid').addEventListener('click', e => {
