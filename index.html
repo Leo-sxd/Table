@@ -10,18 +10,19 @@
   <div class="app">
     <!-- ==================== 侧边导航 ==================== -->
     <aside class="sidebar">
-      <div class="logo">📋 <span>Table-Agent</span></div>
+      <div class="logo"><span>Table-Agent</span></div>
       <nav>
-        <button class="nav-item active" data-page="agent">🤖 智能体<span class="nav-badge hidden" id="nav-remind-badge"></span></button>
-        <button class="nav-item" data-page="usage">💰 用量</button>
-        <button class="nav-item" data-page="schedule">📅 课程表</button>
-        <button class="nav-item" data-page="bookmarks">🔖 收藏夹</button>
-        <button class="nav-item" data-page="focus">🍅 专注</button>
-        <button class="nav-item" data-page="tasks">✅ 待办</button>
-        <button class="nav-item" data-page="gantt">📊 规划</button>
-        <button class="nav-item" data-page="map">🗺️ 地图</button>
-        <button class="nav-item" data-page="multi">🖥️ 多开器</button>
-        <button class="nav-item" data-page="paper">📝 论文</button>
+        <button class="nav-item active" data-page="agent">智能体<span class="nav-badge hidden" id="nav-remind-badge"></span></button>
+        <button class="nav-item" data-page="usage">用量</button>
+        <button class="nav-item" data-page="schedule">课程表</button>
+        <button class="nav-item" data-page="bookmarks">收藏夹</button>
+        <button class="nav-item" data-page="focus">专注</button>
+        <button class="nav-item" data-page="tasks">待办</button>
+        <button class="nav-item" data-page="gantt">规划</button>
+        <button class="nav-item" data-page="map">地图</button>
+        <button class="nav-item" data-page="multi">多开器</button>
+        <button class="nav-item" data-page="paper">论文</button>
+        <button class="nav-item" data-page="settings">设置</button>
       </nav>
       <div class="side-foot">数据保存在本地浏览器<br />v1.0 测试版 · DeepSeek 驱动</div>
     </aside>
@@ -33,7 +34,7 @@
       <section id="page-schedule" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>📅 大学生课程表</h1>
+            <h1>大学生课程表</h1>
             <p class="sub">当前：<b id="cur-week-label">第 — 周</b> · <span id="today-label"></span></p>
           </div>
           <div class="head-controls">
@@ -49,30 +50,30 @@
                 <option value="14">14</option>
               </select>
             </label>
-            <button class="btn ghost" id="btn-times">⏰ 节次时间</button>
+            <button class="btn ghost" id="btn-times">节次时间</button>
             <div class="week-nav">
-              <button id="wk-prev" class="btn ghost" title="上一周">◀</button>
+              <button id="wk-prev" class="btn ghost" title="上一周">‹</button>
               <select id="wk-select" title="选择周次"></select>
-              <button id="wk-next" class="btn ghost" title="下一周">▶</button>
+              <button id="wk-next" class="btn ghost" title="下一周">›</button>
               <button id="btn-today" class="btn ghost">今天</button>
             </div>
             <div class="dropdown">
-              <button class="btn ghost" id="btn-import-menu">⬇ 导入课表 ▾</button>
+              <button class="btn ghost" id="btn-import-menu">导入课表 ▾</button>
               <div class="menu hidden" id="import-menu">
-                <button data-import="html">📄 教务系统网页(HTML)导入</button>
-                <button data-import="csv">📊 CSV 模板导入</button>
-                <button data-import="paste">📋 粘贴文本导入</button>
-                <button data-import="template">⬇ 下载 CSV 模板</button>
+                <button data-import="html">教务系统网页(HTML)导入</button>
+                <button data-import="csv">CSV 模板导入</button>
+                <button data-import="paste">粘贴文本导入</button>
+                <button data-import="template">下载 CSV 模板</button>
               </div>
             </div>
-            <button class="btn ghost" id="btn-export-ics">📅 导出 ICS</button>
+            <button class="btn ghost" id="btn-export-ics">导出 ICS</button>
             <button class="btn primary" id="btn-add-course">＋ 添加课程</button>
-            <button class="btn ghost danger" id="btn-clear-courses">🗑 清空课表</button>
+            <button class="btn ghost danger" id="btn-clear-courses">清空课表</button>
           </div>
         </div>
 
         <div id="banner-warn" class="banner hidden">
-          ⚠️ 尚未设置「开学第一天（上课）日期」，无法计算当前周和今日课程。请在上方准确填写本学期开学第一天上课的日期（重要：填错会导致当天课程读取错误）。
+          尚未设置「开学第一天（上课）日期」，无法计算当前周和今日课程。请在上方准确填写本学期开学第一天上课的日期（重要：填错会导致当天课程读取错误）。
         </div>
 
         <div class="sch-wrap">
@@ -86,17 +87,17 @@
       <section id="page-bookmarks" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>🔖 Edge 收藏夹</h1>
+            <h1>Edge 收藏夹</h1>
             <p class="sub" id="bm-stats"></p>
           </div>
           <div class="head-controls">
-            <button class="btn ghost" id="btn-cats">🏷 分类管理</button>
-            <button class="btn primary" id="btn-bm-import">📥 一键导入 Edge 收藏夹</button>
+            <button class="btn ghost" id="btn-cats">分类管理</button>
+            <button class="btn primary" id="btn-bm-import">一键导入 Edge 收藏夹</button>
             <button class="btn ghost" id="btn-bm-add">＋ 手动收藏</button>
-            <button class="btn ghost" id="btn-bm-dedupe">🧹 一键去重</button>
-            <button class="btn ghost" id="btn-bm-export-edge">📤 导出 Edge(HTML)</button>
-            <button class="btn ghost" id="btn-bm-export">📤 导出备份 JSON</button>
-            <button class="btn ghost danger" id="btn-bm-clear">🗑 清空</button>
+            <button class="btn ghost" id="btn-bm-dedupe">一键去重</button>
+            <button class="btn ghost" id="btn-bm-export-edge">导出 Edge(HTML)</button>
+            <button class="btn ghost" id="btn-bm-export">导出备份 JSON</button>
+            <button class="btn ghost danger" id="btn-bm-clear">清空</button>
           </div>
         </div>
 
@@ -109,7 +110,7 @@
         </div>
 
         <div class="bm-toolbar">
-          <input id="bm-search" class="search-input" type="search" placeholder="🔍 搜索网站名称 / 网址 / 分类名称…" />
+          <input id="bm-search" class="search-input" type="search" placeholder="搜索网站名称 / 网址 / 分类名称…" />
         </div>
         <div class="chips" id="bm-chips"></div>
         <div class="bm-grid" id="bm-grid"></div>
@@ -119,7 +120,7 @@
       <section id="page-tasks" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>✅ 任务待办</h1>
+            <h1>任务待办</h1>
             <p class="sub" id="tk-stats"></p>
           </div>
           <div class="head-controls">
@@ -133,7 +134,7 @@
       <section id="page-gantt" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>📊 未来规划 · 甘特图</h1>
+            <h1>未来规划 · 甘特图</h1>
             <p class="sub" id="gt-stats"></p>
           </div>
           <div class="head-controls">
@@ -146,7 +147,7 @@
                 <option value="48">48px/天</option>
               </select>
             </label>
-            <button class="btn ghost" id="btn-gt-today">📍 今天</button>
+            <button class="btn ghost" id="btn-gt-today">今天</button>
             <button class="btn primary" id="btn-gt-add">＋ 添加事件</button>
           </div>
         </div>
@@ -159,7 +160,7 @@
       <section id="page-usage" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>💰 用量中心</h1>
+            <h1>用量中心</h1>
             <p class="sub">DeepSeek 官方余额接口 + 本看板逐请求消耗统计（估算费用）</p>
           </div>
           <div class="head-controls">
@@ -189,7 +190,7 @@
         <div class="card us-price-card">
           <div class="card-head"><h2>单价设置（¥ / 百万 tokens · 每模型独立六项）</h2><span class="card-hint">官方调价后在此修改，费用估算立即生效；高峰时段为北京时间 9:00-12:00、14:00-18:00（其余为空闲时段）</span></div>
           <div id="us-price-groups"></div>
-          <div class="us-price-row"><button class="btn primary" id="us-price-save">💾 保存全部单价</button></div>
+          <div class="us-price-row"><button class="btn primary" id="us-price-save">保存全部单价</button></div>
         </div>
       </section>
 
@@ -197,19 +198,19 @@
       <section id="page-map" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>🗺️ 高德地图</h1>
+            <h1>高德地图</h1>
             <p class="sub" id="map-status">未配置 API Key</p>
           </div>
           <div class="head-controls">
-            <input id="map-search-input" class="search-input" type="search" placeholder="🔍 搜索地点（如：西安交通大学）" style="max-width:280px" />
+            <input id="map-search-input" class="search-input" type="search" placeholder="搜索地点（如：西安交通大学）" style="max-width:280px" />
             <button class="btn primary" id="btn-map-search">查找</button>
-            <button class="btn ghost" id="btn-map-locate">📍 定位</button>
-            <button class="btn ghost" id="btn-fence-add">⛓️ 电子围栏</button>
-            <button class="btn ghost" id="btn-map-ruler">📏 测距</button>
-            <button class="btn ghost" id="btn-map-route">🧭 路径规划</button>
-            <button class="btn ghost" id="btn-map-metro">🚇 地铁图</button>
-            <button class="btn ghost" id="btn-map-config">⚙️ Key 配置</button>
-            <button class="btn ghost" id="btn-map-full">⛶ 全屏</button>
+            <button class="btn ghost" id="btn-map-locate">定位</button>
+            <button class="btn ghost" id="btn-fence-add">电子围栏</button>
+            <button class="btn ghost" id="btn-map-ruler">测距</button>
+            <button class="btn ghost" id="btn-map-route">路径规划</button>
+            <button class="btn ghost" id="btn-map-metro">地铁图</button>
+            <button class="btn ghost" id="btn-map-config">Key 配置</button>
+            <button class="btn ghost" id="btn-map-full">全屏</button>
           </div>
         </div>
         <div class="map-layout">
@@ -220,7 +221,7 @@
             </div>
             <div id="map-draw-banner" class="map-draw-banner hidden">
               <span id="map-draw-text">正在绘制围栏…</span>
-              <button class="btn primary btn-sm hidden" id="map-draw-done">✅ 完成</button>
+              <button class="btn primary btn-sm hidden" id="map-draw-done">完成</button>
               <button class="btn ghost btn-sm" id="map-draw-cancel">取消</button>
             </div>
             <div id="map-route-banner" class="map-draw-banner map-route-banner hidden">
@@ -228,7 +229,7 @@
               <button class="btn ghost btn-sm" id="map-route-cancel">取消</button>
             </div>
             <div id="map-metro-panel" class="map-metro-panel hidden">
-              <div class="mm-head">🚇 地铁图</div>
+              <div class="mm-head">地铁图</div>
               <div class="mm-row">
                 <select id="mm-city" title="选择城市，加载该城市地铁线路图">
                   <option>北京</option><option>上海</option><option>广州</option><option>深圳</option>
@@ -245,8 +246,8 @@
               </div>
               <div class="mm-row2">
                 <span id="mm-picked">起点：—　终点：—</span>
-                <button class="btn primary btn-sm" id="btn-mm-plan">🚀 最省时</button>
-                <button class="btn ghost btn-sm hidden" id="btn-mm-retry">🔄 重试</button>
+                <button class="btn primary btn-sm" id="btn-mm-plan">最省时</button>
+                <button class="btn ghost btn-sm hidden" id="btn-mm-retry">重试</button>
                 <button class="btn ghost btn-sm" id="btn-mm-exit">✕</button>
               </div>
               <div id="mm-status" class="mm-status">加载中…</div>
@@ -258,7 +259,7 @@
               <h2>地图面板</h2>
               <div class="seg" id="map-side-tabs">
                 <button class="seg-btn active" data-tab="results">搜索结果</button>
-                <button class="seg-btn" data-tab="fences">⛓️ 围栏</button>
+                <button class="seg-btn" data-tab="fences">围栏</button>
               </div>
             </div>
             <span class="card-hint" id="map-side-hint" style="margin-bottom:6px">输入关键词点击「查找」</span>
@@ -275,7 +276,7 @@
       <section id="page-multi" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>🖥️ 多开器</h1>
+            <h1>多开器</h1>
             <p class="sub" id="multi-status">同时打开多个网页分屏独立操作 · 部分网站禁止嵌入（该屏会显示空白）</p>
           </div>
           <div class="head-controls">
@@ -285,10 +286,10 @@
               <button class="seg-btn" data-layout="4">4 屏</button>
             </div>
             <select id="multi-group" class="select" style="width:auto"><option value="">— 网址组 —</option></select>
-            <button class="btn ghost" id="multi-group-save">💾 存为组</button>
-            <button class="btn ghost danger" id="multi-group-del">🗑 删组</button>
-            <button class="btn ghost" id="btn-multi-popall" title="把各屏网址在独立浏览器窗口中打开（不受嵌入/第三方Cookie限制）">🪟 全部外置</button>
-            <button class="btn ghost" id="btn-multi-full">⛶ 全屏</button>
+            <button class="btn ghost" id="multi-group-save">存为组</button>
+            <button class="btn ghost danger" id="multi-group-del">删组</button>
+            <button class="btn ghost" id="btn-multi-popall" title="把各屏网址在独立浏览器窗口中打开（不受嵌入/第三方Cookie限制）">全部外置</button>
+            <button class="btn ghost" id="btn-multi-full">全屏</button>
           </div>
         </div>
         <div id="multi-grid" class="multi-grid layout-2"></div>
@@ -298,7 +299,7 @@
       <section id="page-focus" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>🍅 番茄钟专注</h1>
+            <h1>番茄钟专注</h1>
             <p class="sub" id="focus-status-line">专注 25 分钟 · 休息 5 分钟 · 每 4 轮长休息 15 分钟</p>
           </div>
           <div class="head-controls">
@@ -308,14 +309,14 @@
             <label class="inline-field">专注(分)<input id="focus-min" type="number" min="1" max="180" style="width:62px" /></label>
             <label class="inline-field">休息(分)<input id="focus-break" type="number" min="1" max="60" style="width:62px" /></label>
             <label class="inline-field">长休息(分)<input id="focus-long" type="number" min="1" max="60" style="width:62px" /></label>
-            <button class="btn ghost" id="btn-focus-reset">🔁 重置</button>
-            <button class="btn ghost danger hidden" id="btn-focus-stop">⏹ 结束本轮</button>
+            <button class="btn ghost" id="btn-focus-reset">重置</button>
+            <button class="btn ghost danger hidden" id="btn-focus-stop">结束本轮</button>
           </div>
         </div>
 
         <div class="focus-grid">
           <div class="card focus-timer-card">
-            <div class="focus-mode" id="focus-mode">🍅 专注</div>
+            <div class="focus-mode" id="focus-mode">专注</div>
             <div class="focus-ring" id="focus-ring">
               <svg viewBox="0 0 220 220">
                 <circle class="fr-bg" cx="110" cy="110" r="96"></circle>
@@ -328,8 +329,8 @@
             </div>
             <div class="focus-rounds" id="focus-rounds"></div>
             <div class="focus-ctrl">
-              <button class="btn primary btn-lg" id="btn-focus-toggle">▶ 开始专注</button>
-              <button class="btn ghost btn-lg" id="btn-focus-skip">⏭ 跳过</button>
+              <button class="btn primary btn-lg" id="btn-focus-toggle">开始专注</button>
+              <button class="btn ghost btn-lg" id="btn-focus-skip">跳过</button>
             </div>
           </div>
 
@@ -338,7 +339,7 @@
               <div class="card-head"><h2>专注统计</h2><span class="card-hint">今日 / 本周 / 累计</span></div>
               <div class="focus-stat-grid">
                 <div class="focus-stat"><b id="focus-today-min">0</b><span>今日专注(分)</span></div>
-                <div class="focus-stat"><b id="focus-today-count">0</b><span>今日🍅数</span></div>
+                <div class="focus-stat"><b id="focus-today-count">0</b><span>今日番茄数</span></div>
                 <div class="focus-stat"><b id="focus-week-min">0</b><span>本周(分)</span></div>
                 <div class="focus-stat"><b id="focus-total-min">0</b><span>累计(分)</span></div>
               </div>
@@ -359,7 +360,7 @@
       <section id="page-paper" class="page hidden">
         <div class="page-head">
           <div>
-            <h1>📝 论文撰写</h1>
+            <h1>论文撰写</h1>
             <p class="sub" id="paper-status">自动保存 · <span id="paper-count">0 字</span></p>
           </div>
           <div class="head-controls">
@@ -370,16 +371,70 @@
             <label class="inline-field">字体
               <select id="paper-font" style="width:190px"></select>
             </label>
-            <button class="btn ghost" id="btn-paper-bold" title="先选中文字，再点此按钮（或 Ctrl+B）">𝐁 加粗</button>
-            <button class="btn ghost" id="btn-paper-copy" title="复制全文（粘贴到 Word 等软件保留加粗格式）">📋 复制</button>
-            <button class="btn ghost" id="btn-paper-word" title="下载 Word 文档（.doc），用 Word 打开后格式 100% 保留，不受粘贴模式影响">⬇ 导出 Word</button>
-            <button class="btn ghost" id="btn-paper-voice">🎤 语音输入 (Alt+V)</button>
-            <button class="btn ghost danger" id="btn-paper-clear">🗑 清空</button>
+            <button class="btn ghost" id="btn-paper-bold" title="先选中文字，再点此按钮（或 Ctrl+B）">加粗</button>
+            <button class="btn ghost" id="btn-paper-copy" title="复制全文（粘贴到 Word 等软件保留加粗格式）">复制</button>
+            <button class="btn ghost" id="btn-paper-word" title="下载 Word 文档（.doc），用 Word 打开后格式 100% 保留，不受粘贴模式影响">导出 Word</button>
+            <button class="btn ghost" id="btn-paper-voice">语音输入 (Alt+V)</button>
+            <button class="btn ghost danger" id="btn-paper-clear">清空</button>
           </div>
         </div>
         <div class="paper-wrap">
           <div id="paper-text" class="paper-editor" contenteditable="true" spellcheck="false"
-               data-placeholder="在这里撰写论文正文…（Alt+V 语音听写；选中文字后点「𝐁 加粗」或 Ctrl+B；「📋 复制」全文）"></div>
+               data-placeholder="在这里撰写论文正文…（Alt+V 语音听写；选中文字后点「加粗」或 Ctrl+B；「复制」全文）"></div>
+        </div>
+      </section>
+
+      <!-- ============ 页面：设置 ============ -->
+      <section id="page-settings" class="page hidden">
+        <div class="page-head">
+          <div>
+            <h1>设置</h1>
+            <p class="sub">接口配置与主题外观 · 所有配置仅保存在本机浏览器，不会上传</p>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <div class="card">
+            <div class="card-head"><h2>智能体 API（DeepSeek）</h2><span class="card-hint" id="set-agent-status">未配置</span></div>
+            <label class="field"><span>API Key（保存在本地浏览器）</span>
+              <input id="ag-key" type="password" placeholder="sk-…" /></label>
+            <label class="field"><span>接口地址（默认官方，可填代理以解决跨域）</span>
+              <input id="ag-base" type="text" placeholder="https://api.deepseek.com" /></label>
+            <label class="field"><span>模型</span>
+              <select id="ag-model">
+                <option value="deepseek-v4-flash">deepseek-v4-flash（V4 快速版）</option>
+                <option value="deepseek-v4-pro">deepseek-v4-pro（V4 旗舰版）</option>
+              </select></label>
+            <label class="check-row">
+              <input type="checkbox" id="ag-voicefix" checked />
+              <span>语音识别后先用 AI 校正同音字（更准确，需已配置 API Key）</span>
+            </label>
+            <div class="settings-btn-row">
+              <button class="btn primary" id="btn-ag-save">保存配置</button>
+              <button class="btn ghost" id="btn-agent-test">测试连接</button>
+            </div>
+            <p class="cfg-hint">前往 <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a> 申请 API Key。</p>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>高德地图 API</h2><span class="card-hint" id="set-map-status">未配置</span></div>
+            <label class="field"><span>API Key *（Web服务 / JS API 共用）</span>
+              <input id="map-key" type="text" placeholder="在高德开放平台创建应用后获取" /></label>
+            <label class="field"><span>安全密钥（SecurityJsCode，JS API 2.0 必需）</span>
+              <input id="map-sec" type="text" placeholder="与 Key 配套的安全密钥" /></label>
+            <div class="guide">
+              <b>申请步骤：</b><br />
+              1. 打开 <code>https://console.amap.com</code> → 应用管理 → 我的应用 → 创建新应用<br />
+              2. 添加 Key，服务平台勾选 <b>「Web端(JS API)」</b> 与 <b>「Web服务」</b><br />
+              3. 复制 <b>Key</b> 与 <b>安全密钥</b> 填入上方，点「保存并测试」<br />
+              Key 仅保存在本机浏览器 localStorage，不会上传。
+            </div>
+            <button class="btn primary" id="map-save-test">保存并测试</button>
+          </div>
+
+          <div class="card settings-theme">
+            <div class="card-head"><h2>主题皮肤</h2><span class="card-hint">点击即切换，自动保存</span></div>
+            <div class="theme-grid" id="theme-grid"></div>
+          </div>
         </div>
       </section>
 
@@ -387,7 +442,7 @@
       <section id="page-agent" class="page">
         <div class="page-head">
           <div>
-            <h1>🤖 网页智能体</h1>
+            <h1>智能体</h1>
             <p class="sub">接入 DeepSeek API，可语音/文字指令让智能体操作本看板；对话记录自动保存，可随时新建、切换或删除</p>
           </div>
         </div>
@@ -399,8 +454,8 @@
           </div>
           <div class="card chat-card">
             <div class="chat-tabs">
-              <button class="chat-tab active" data-tab="chat">💬 对话</button>
-              <button class="chat-tab" data-tab="remind">⏰ 提醒<span class="red-badge hidden" id="remind-badge"></span></button>
+              <button class="chat-tab active" data-tab="chat">对话</button>
+              <button class="chat-tab" data-tab="remind">提醒<span class="red-badge hidden" id="remind-badge"></span></button>
             </div>
             <div class="quick-chips">
               <button class="qchip" data-q="今天有什么课？">今天有什么课？</button>
@@ -410,43 +465,14 @@
               <button class="qchip" data-q="现在是第几周？">现在是第几周？</button>
             </div>
             <div class="chat-msgs" id="chat-msgs">
-              <div class="msg ai">你好！我是你的看板智能助手 🤖<br />我可以帮你：查看今天/某一周的课程、搜索并打开收藏网站、添加课程或收藏、给网站分类等。先在右侧配置 DeepSeek API Key，然后直接告诉我想做什么吧～</div>
+              <div class="msg ai">你好！我是你的看板智能助手<br />我可以帮你：查看今天/某一周的课程、搜索并打开收藏网站、添加课程或收藏、给网站分类等。先在「设置」页配置 DeepSeek API Key，然后直接告诉我想做什么吧～</div>
             </div>
             <div class="remind-msgs hidden" id="remind-msgs"></div>
             <div class="chat-inputrow">
-              <button class="btn voice-btn" id="btn-voice" title="语音输入（需 Edge/Chrome、联网和麦克风权限）">🎤</button>
-              <input id="chat-input" type="text" placeholder="例如：帮我打开收藏里的 GitHub，然后看看这周有什么课（也可点 🎤 语音输入）" />
-              <button class="btn primary" id="btn-chat-send">发送 ➤</button>
+              <button class="btn voice-btn" id="btn-voice" title="语音输入（需 Edge/Chrome、联网和麦克风权限）">语音</button>
+              <input id="chat-input" type="text" placeholder="例如：帮我打开收藏里的 GitHub，然后看看这周有什么课（也可点「语音」输入）" />
+              <button class="btn primary" id="btn-chat-send">发送</button>
             </div>
-          </div>
-
-          <div class="card agent-cfg">
-            <h3>⚙️ DeepSeek 接口配置</h3>
-            <label class="field">
-              <span>API Key（保存在本地浏览器）</span>
-              <input id="ag-key" type="password" placeholder="sk-…" />
-            </label>
-            <label class="field">
-              <span>接口地址（默认官方，可填代理以解决跨域）</span>
-              <input id="ag-base" type="text" placeholder="https://api.deepseek.com" />
-            </label>
-            <label class="field">
-              <span>模型</span>
-              <select id="ag-model">
-                <option value="deepseek-v4-flash">deepseek-v4-flash（V4 快速版）</option>
-                <option value="deepseek-v4-pro">deepseek-v4-pro（V4 旗舰版）</option>
-              </select>
-            </label>
-            <button class="btn primary btn-block" id="btn-ag-save">💾 保存配置</button>
-            <label class="check-row">
-              <input type="checkbox" id="ag-voicefix" checked />
-              <span>语音识别后先用 AI 校正同音字（更准确，需已配置 API Key）</span>
-            </label>
-            <p class="cfg-hint">
-              前往 <a href="https://platform.deepseek.com" target="_blank" rel="noopener">platform.deepseek.com</a> 申请 API Key。<br />
-              🎤 语音输入：点麦克风说话；快捷键 <b>Alt+V</b> 开始/停止；在智能体页<b>按住空格键</b>说话，松开自动发送（需 Edge/Chrome、联网与麦克风权限）。<br />
-              若自动打开网站被浏览器拦截，请允许本页弹窗，或直接点击消息中的链接。
-            </p>
           </div>
         </div>
       </section>
@@ -512,7 +538,7 @@
       </div>
       <div class="modal-foot">
         <button class="btn ghost" data-close="modal-import">取消</button>
-        <button class="btn primary hidden" id="im-confirm">✅ 确认导入</button>
+        <button class="btn primary hidden" id="im-confirm">确认导入</button>
       </div>
     </div>
   </div>
@@ -522,7 +548,7 @@
     <div class="modal-mask"></div>
     <div class="modal-card">
       <div class="modal-head">
-        <h3>⏰ 节次时间设置</h3>
+        <h3>节次时间设置</h3>
         <button class="modal-close" data-close="modal-times">✕</button>
       </div>
       <div class="modal-body">
@@ -530,7 +556,7 @@
         <p class="cfg-hint">填写每日各节次的开始 / 结束时间后，将显示在课表左侧节次列、今日课程和课程块悬浮提示中；某节无课可留空。</p>
       </div>
       <div class="modal-foot">
-        <button class="btn ghost" id="times-default">⚡ 填充默认时间</button>
+        <button class="btn ghost" id="times-default">填充默认时间</button>
         <button class="btn ghost" data-close="modal-times">取消</button>
         <button class="btn primary" id="times-save">保存</button>
       </div>
@@ -542,7 +568,7 @@
     <div class="modal-mask"></div>
     <div class="modal-card">
       <div class="modal-head">
-        <h3>🏷 分类管理</h3>
+        <h3>分类管理</h3>
         <button class="modal-close" data-close="modal-cats">✕</button>
       </div>
       <div class="modal-body">
@@ -623,40 +649,12 @@
     </div>
   </div>
 
-  <!-- ==================== 地图 Key 配置弹窗 ==================== -->
-  <div id="modal-mapcfg" class="modal hidden">
-    <div class="modal-mask"></div>
-    <div class="modal-card">
-      <div class="modal-head">
-        <h3>🗺️ 高德地图 Key 配置</h3>
-        <button class="modal-close" data-close="modal-mapcfg">✕</button>
-      </div>
-      <div class="modal-body">
-        <label class="field"><span>API Key *（Web服务 / JS API 共用）</span>
-          <input id="map-key" type="text" placeholder="在高德开放平台创建应用后获取" /></label>
-        <label class="field"><span>安全密钥（SecurityJsCode，JS API 2.0 必需）</span>
-          <input id="map-sec" type="text" placeholder="与 Key 配套的安全密钥" /></label>
-        <div class="guide">
-          <b>申请步骤：</b><br />
-          1. 打开 <code>https://console.amap.com</code> → 应用管理 → 我的应用 → 创建新应用<br />
-          2. 添加 Key，服务平台勾选 <b>「Web端(JS API)」</b> 与 <b>「Web服务」</b><br />
-          3. 复制 <b>Key</b> 与 <b>安全密钥</b> 填入上方，点「保存并测试」<br />
-          Key 仅保存在本机浏览器 localStorage，不会上传。
-        </div>
-      </div>
-      <div class="modal-foot">
-        <button class="btn ghost" data-close="modal-mapcfg">取消</button>
-        <button class="btn primary" id="map-save-test">💾 保存并测试</button>
-      </div>
-    </div>
-  </div>
-
   <!-- ==================== 电子围栏弹窗 ==================== -->
   <div id="modal-fence" class="modal hidden">
     <div class="modal-mask"></div>
     <div class="modal-card">
       <div class="modal-head">
-        <h3 id="fence-modal-title">⛓️ 新建电子围栏</h3>
+        <h3 id="fence-modal-title">新建电子围栏</h3>
         <button class="modal-close" data-close="modal-fence">✕</button>
       </div>
       <div class="modal-body">
@@ -677,8 +675,8 @@
         <div id="fence-pick-group" class="hidden">
           <label class="field"><span>多边形绘制方式</span>
             <select id="fence-draw-mode">
-              <option value="free">🖱 自由绘制（单击加点，双击结束）</option>
-              <option value="pick">🎯 选点绘制（选取旧围栏内的多个点）</option>
+              <option value="free">自由绘制（单击加点，双击结束）</option>
+              <option value="pick">选点绘制（选取旧围栏内的多个点）</option>
             </select>
           </label>
           <label class="field"><span>约束围栏（选点绘制时选择旧围栏）</span>
@@ -689,15 +687,15 @@
           <label class="field"><span>圆形半径（米）</span>
             <input id="fence-radius" type="number" min="10" max="100000" step="10" value="200" /></label>
           <div class="seg" id="fence-circle-mode" style="margin-bottom:14px">
-            <button class="seg-btn active" data-mode="drag">🖱 拖动设置半径</button>
-            <button class="seg-btn" data-mode="input">🎯 输入半径（点选圆心）</button>
+            <button class="seg-btn active" data-mode="drag">拖动设置半径</button>
+            <button class="seg-btn" data-mode="input">输入半径（点选圆心）</button>
           </div>
         </div>
-        <div class="guide">保存后围栏以橙色虚线 + 半透明填充显示在地图上；可在右侧「⛓️ 围栏」面板中定位、改名、重绘或删除。</div>
+        <div class="guide">保存后围栏以橙色虚线 + 半透明填充显示在地图上；可在右侧「围栏」面板中定位、改名、重绘或删除。</div>
       </div>
       <div class="modal-foot">
         <button class="btn ghost" data-close="modal-fence">取消</button>
-        <button class="btn primary" id="fence-draw-start">▶ 开始绘制</button>
+        <button class="btn primary" id="fence-draw-start">开始绘制</button>
       </div>
     </div>
   </div>
@@ -707,7 +705,7 @@
     <div class="modal-mask"></div>
     <div class="modal-card">
       <div class="modal-head">
-        <h3>🧭 路径规划</h3>
+        <h3>路径规划</h3>
         <button class="modal-close" data-close="modal-route">✕</button>
       </div>
       <div class="modal-body">
@@ -715,7 +713,7 @@
           <span class="route-label">起点 *（搜索后从列表选择具体位置）</span>
           <div class="route-input-row">
             <input id="route-origin" type="text" placeholder="如：西安交通大学 东门（或 经度,纬度）" />
-            <button class="btn ghost" id="route-origin-search">🔍 搜索</button>
+            <button class="btn ghost" id="route-origin-search">搜索</button>
           </div>
           <div class="route-picked hidden" id="route-origin-picked"></div>
           <div class="route-pick-list" id="route-origin-list"></div>
@@ -724,25 +722,25 @@
           <span class="route-label">终点 *（搜索后从列表选择具体位置）</span>
           <div class="route-input-row">
             <input id="route-dest" type="text" placeholder="如：钟楼饭店（或 经度,纬度）" />
-            <button class="btn ghost" id="route-dest-search">🔍 搜索</button>
+            <button class="btn ghost" id="route-dest-search">搜索</button>
           </div>
           <div class="route-picked hidden" id="route-dest-picked"></div>
           <div class="route-pick-list" id="route-dest-list"></div>
         </div>
         <label class="field"><span>出行方式</span>
           <select id="route-mode">
-            <option value="driving">🚗 驾车</option>
-            <option value="walking">🚶 步行</option>
-            <option value="bicycling">🚴 骑行</option>
-            <option value="metro">🚇 地铁（优先含地铁的换乘方案）</option>
-            <option value="transit">🚌 混合（公交/地铁/步行综合）</option>
+            <option value="driving">驾车</option>
+            <option value="walking">步行</option>
+            <option value="bicycling">骑行</option>
+            <option value="metro">地铁（优先含地铁的换乘方案）</option>
+            <option value="transit">混合（公交/地铁/步行综合）</option>
           </select>
         </label>
-        <div class="guide">⚠️ 规划将给出「🏆 最优方案」与最多两条备选方案（虚线显示）；混合出行自动组合公交、地铁与步行。重名建筑请务必在地图上对照选点。</div>
+        <div class="guide">规划将给出「最优方案」与最多两条备选方案（虚线显示）；混合出行自动组合公交、地铁与步行。重名建筑请务必在地图上对照选点。</div>
       </div>
       <div class="modal-foot">
         <button class="btn ghost" data-close="modal-route">取消</button>
-        <button class="btn primary" id="route-plan-start">▶ 开始规划</button>
+        <button class="btn primary" id="route-plan-start">开始规划</button>
       </div>
     </div>
   </div>

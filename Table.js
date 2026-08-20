@@ -8,7 +8,7 @@
  *     当日课程会计算错误。
  *  2. Edge 收藏夹：一键导入（本地 Bookmarks JSON 或
  *     导出的 HTML）、分类管理、搜索、点击跳转。
- *  3. 网页智能体：DeepSeek API（function calling 工具调用），
+ *  3. 智能体：DeepSeek API（function calling 工具调用），
  *     可让智能体执行：查周次、查课表、打开收藏网站、
  *     添加课程/收藏、分类、切换页面等。
  * ------------------------------------------------------------
@@ -76,6 +76,7 @@ const LS = {
   multiGroups: 'td_multi_groups_v1',
   focus: 'td_focus_v1',
   paper: 'td_paper_v1',
+  theme: 'td_theme_v1',
 };
 function load(key, def) {
   try {
@@ -359,8 +360,8 @@ function ensureViewWeek() {
 function renderWeekBadge() {
   const wi = weekInfo();
   if (wi.week === null) $('#cur-week-label').textContent = '第 — 周';
-  else if (wi.week === 0) $('#cur-week-label').textContent = '未开学 · 🎉 假期';
-  else $('#cur-week-label').textContent = `第 ${wi.week} 周${wi.isHoliday ? ' · 🎉 假期' : ''}`;
+  else if (wi.week === 0) $('#cur-week-label').textContent = '未开学 · 假期';
+  else $('#cur-week-label').textContent = `第 ${wi.week} 周${wi.isHoliday ? ' · 假期' : ''}`;
   $('#today-label').textContent = `今天是 ${WEEKDAYS[wi.weekday - 1]} · ${dateStr(wi.today)}`;
 }
 
@@ -386,7 +387,7 @@ function renderSchedule() {
   const isCurWeek = !!(monday && wi.week && viewWeek === wi.week);
 
   if (!courses.length) {
-    grid.innerHTML = '<div class="sch-empty">还没有课程<br/>点击右上角「＋ 添加课程」或「⬇ 导入课表」开始</div>';
+    grid.innerHTML = '<div class="sch-empty">还没有课程<br/>点击右上角「＋ 添加课程」或「导入课表」开始</div>';
     return;
   }
 
@@ -465,15 +466,15 @@ function renderToday() {
   const wi = weekInfo();
   const box = $('#today-panel');
   if (wi.week === null) {
-    box.innerHTML = '<h3>📌 今日课程</h3><div class="tp-empty">请先准确设置「开学第一天（上课）日期」，才能计算今天属于第几周、该上什么课。</div>';
+    box.innerHTML = '<h3>今日课程</h3><div class="tp-empty">请先准确设置「开学第一天（上课）日期」，才能计算今天属于第几周、该上什么课。</div>';
     return;
   }
   if (wi.week === 0) {
-    box.innerHTML = `<h3>📌 今日课程</h3><div class="tp-empty">🎉 尚未开学（开学日期 ${esc(settings.semesterStart)}），假期中</div>`;
+    box.innerHTML = `<h3>今日课程</h3><div class="tp-empty">尚未开学（开学日期 ${esc(settings.semesterStart)}），假期中</div>`;
     return;
   }
   if (wi.isHoliday) {
-    box.innerHTML = `<h3>📌 今日课程 · 第 ${wi.week} 周 · ${WEEKDAYS[wi.weekday - 1]}</h3><div class="tp-empty">🎉 本周为假期（本周无课程安排）</div>`;
+    box.innerHTML = `<h3>今日课程 · 第 ${wi.week} 周 · ${WEEKDAYS[wi.weekday - 1]}</h3><div class="tp-empty">本周为假期（本周无课程安排）</div>`;
     return;
   }
   const list = mergeSameSlotCourses(courses
@@ -481,7 +482,7 @@ function renderToday() {
     .sort((a, b) => a.startSec - b.startSec);
   const secTxt = c => c.startSec === c.endSec ? `第${c.startSec}节` : `第${c.startSec}-${c.endSec}节`;
   const meta = c => [c.teacher, c.location].filter(Boolean).join(' @ ');
-  box.innerHTML = `<h3>📌 今日课程 · 第 ${wi.week} 周 · ${WEEKDAYS[wi.weekday - 1]}</h3>` + (
+  box.innerHTML = `<h3>今日课程 · 第 ${wi.week} 周 · ${WEEKDAYS[wi.weekday - 1]}</h3>` + (
     list.length
       ? list.map(c => {
           const tStr = courseTime(c);
@@ -491,7 +492,7 @@ function renderToday() {
           <span style="color:var(--ink2)">${esc(meta(c))}</span>
           <span class="badge">${esc(c.weeksText)}</span></div>`;
         }).join('')
-      : '<div class="tp-empty">今天没有课 🎉</div>'
+      : '<div class="tp-empty">今天没有课</div>'
   );
 }
 
@@ -519,7 +520,10 @@ function openCourseModal(id) {
   $('#modal-course').classList.remove('hidden');
   $('#c-name').focus();
 }
-function closeModal(id) { $('#' + id).classList.add('hidden'); }
+function closeModal(id) {
+  const m = $('#' + id);
+  if (m) m.classList.add('hidden');
+}
 
 function saveCourseFromForm() {
   const partial = {
@@ -620,7 +624,7 @@ function openImport(mode) {
     guide.classList.remove('hidden');
     guide.innerHTML = `
       <div class="guide">
-        <b>📄 从正方教务系统导入步骤：</b><br/>
+        <b>从正方教务系统导入步骤：</b><br/>
         1. 用浏览器登录教务系统 <code>https://cloud.zfsoft.com:6143</code><br/>
         2. 打开「我的课表 / 学生课表查询」页面（<b>在显示课表的那个页面上操作</b>）<br/>
         3. 按 <code>Ctrl+S</code> 保存：选「网页，仅HTML」或「网页，完整」均可；MHTML 单文件也支持<br/>
@@ -630,21 +634,21 @@ function openImport(mode) {
         若解析仍失败，请把保存的 HTML 文件发给开发者适配。
         导入前请确认上方「开学第一天」日期已准确设置。
       </div>
-      <button class="btn primary" id="im-file-btn">📂 选择 HTML 文件</button>`;
+      <button class="btn primary" id="im-file-btn">选择 HTML 文件</button>`;
   } else {
     $('#im-title').textContent = 'CSV 模板导入';
     pasteBox.classList.add('hidden');
     guide.classList.remove('hidden');
     guide.innerHTML = `
       <div class="guide">
-        <b>📊 CSV 模板列：</b>课程名称,教师,教室,星期(1-7),开始节次,结束节次,周次,备注<br/>
+        <b>CSV 模板列：</b>课程名称,教师,教室,星期(1-7),开始节次,结束节次,周次,备注<br/>
         周次支持 <code>1-16周</code>、<code>1-8周(单)</code>、<code>2-16周(双)</code>。
         Excel 编辑后请「另存为 CSV」。<br/>
         若教务系统支持导出课表 Excel，可整理成该模板后导入。
       </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn primary" id="im-file-btn">📂 选择 CSV 文件</button>
-        <button class="btn ghost" data-act="template">⬇ 下载 CSV 模板</button>
+        <button class="btn primary" id="im-file-btn">选择 CSV 文件</button>
+        <button class="btn ghost" data-act="template">下载 CSV 模板</button>
       </div>`;
   }
   $('#modal-import').classList.remove('hidden');
@@ -723,7 +727,7 @@ function showPreview(list, skipped, diag) {
   $('#im-confirm').classList.toggle('hidden', !list.length);
   let summary = `识别到 ${list.length} 门课程${skipped ? `，跳过 ${skipped} 条无法识别的记录` : ''}。<b>若个别行的星期 / 节次 / 周次识别有误，可直接在表格中修改</b>，核对后确认导入：`;
   if (!list.length && diag) {
-    summary += `<br/><span style="color:#b45309">🔎 诊断信息：检测到表格 ${diag.tables} 个（最优表格得分 ${diag.bestTableScore}）· 含「周」的单元格 ${diag.cellsWithWeek} 个 · 疑似课程块元素 ${diag.divCandidates} 个 · 文件编码 ${diag.enc}${diag.mhtml ? ' · MHTML 单文件' : ''}。</span>
+    summary += `<br/><span style="color:#b45309">诊断信息：检测到表格 ${diag.tables} 个（最优表格得分 ${diag.bestTableScore}）· 含「周」的单元格 ${diag.cellsWithWeek} 个 · 疑似课程块元素 ${diag.divCandidates} 个 · 文件编码 ${diag.enc}${diag.mhtml ? ' · MHTML 单文件' : ''}。</span>
     <br/><span style="color:#b45309">请检查：① 保存的是否为打开课表后的页面；② 若课表在新窗口或子页面中显示，请直接在课表页按 Ctrl+S；③ 若课表是图片或 Flash，需改用「粘贴导入」手动整理；④ 仍失败请把该 HTML 文件发给开发者适配。</span>`;
   }
   $('#im-summary').innerHTML = summary;
@@ -1521,8 +1525,8 @@ function renderBookmarks() {
         </div>
       </div>
       <div class="bm-meta">
-        <span class="badge" title="${esc(b.folder)}">📁 ${esc(b.folder)}</span>
-        ${b.category ? `<span class="badge">🏷 ${esc(b.category)}</span>` : ''}
+        <span class="badge" title="${esc(b.folder)}">${esc(b.folder)}</span>
+        ${b.category ? `<span class="badge">${esc(b.category)}</span>` : ''}
       </div>
       <div class="bm-actions">
         <select class="bm-cat" data-act="cat">
@@ -1531,7 +1535,7 @@ function renderBookmarks() {
           <option value="__new">＋ 新分类…</option>
         </select>
         <button class="btn ghost btn-open" data-act="open">↗ 打开</button>
-        <button class="btn ghost btn-rename" data-act="rename" title="修改名称">✏️</button>
+        <button class="btn ghost btn-rename" data-act="rename" title="修改名称">编辑</button>
         <button class="btn ghost danger" data-act="del">✕</button>
       </div>
     </div>`;
@@ -1548,7 +1552,7 @@ function appendOpenAction(name, url) {
   const box = $('#chat-msgs');
   const div = document.createElement('div');
   div.className = 'msg sys';
-  div.innerHTML = `🔗 「${esc(name)}」<button class="btn btn-sm primary open-fallback" data-url="${esc(url)}">↗ 打开网站</button>`;
+  div.innerHTML = `「${esc(name)}」<button class="btn btn-sm primary open-fallback" data-url="${esc(url)}">↗ 打开网站</button>`;
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
 }
@@ -1666,7 +1670,7 @@ function dedupeBookmarksNow() {
 }
 function dedupeBookmarks() {
   const removed = countDupes();
-  if (!removed) return toast('未发现重复收藏 👍');
+  if (!removed) return toast('未发现重复收藏');
   if (!confirm(`发现 ${removed} 条重复收藏（同一网址多次收藏）。\n将保留最早一条并清除其余，保留项的缺失分类会从重复项继承。是否继续？`)) return;
   const n = dedupeBookmarksNow();
   toast(`去重完成：清除 ${n} 条重复收藏`);
@@ -1787,7 +1791,7 @@ function renderTasks() {
       </div>
       <span class="tk-due ${info.cls}">${info.text}</span>
       <div class="tk-ops">
-        <button class="btn ghost btn-sm" data-act="edit">✏️</button>
+        <button class="btn ghost btn-sm" data-act="edit">编辑</button>
         <button class="btn ghost danger btn-sm" data-act="del">✕</button>
       </div>
     </div>`;
@@ -1840,7 +1844,7 @@ function checkTaskReminders() {
       t.reminded = true;
       reminders.unshift({ id: uid(), taskId: t.id, title: t.title, due: t.due, time: now, read: false });
       fired = true;
-      toast(`⏰ 任务「${t.title}」将于 ${fmtTaskTime(t.due)} 到期（1 小时内）`);
+      toast(`任务「${t.title}」将于 ${fmtTaskTime(t.due)} 到期（1 小时内）`);
     }
   });
   if (fired) {
@@ -1865,7 +1869,7 @@ function renderReminders() {
     return;
   }
   box.innerHTML = reminders.map(r => `<div class="remind-item ${r.read ? '' : 'unread'}">
-    <span class="remind-icon">⏰</span>
+    <span class="remind-icon"></span>
     <div class="remind-body">
       <div class="remind-title">任务「${esc(r.title)}」将于 <b>${fmtTaskTime(r.due)}</b> 到期（1 小时内）</div>
       <div class="remind-meta">${fmtSessTime(r.time)} 提醒 · 截止 ${fmtTaskDateTime(r.due)}</div>
@@ -1978,7 +1982,7 @@ function renderGantt() {
     ${sorted.map(row).join('')}
   </div></div>`;
   const now = events.filter(e => eventStatus(e) === '进行中').length;
-  stats.textContent = `共 ${events.length} 个事件 · 进行中 ${now} 个 · 红色竖线为今天 · 点击色块可编辑 · 🍅 专注投入 ${focusFmtMin(focusStats().totalMin)}`;
+  stats.textContent = `共 ${events.length} 个事件 · 进行中 ${now} 个 · 红色竖线为今天 · 点击色块可编辑 · 专注投入 ${focusFmtMin(focusStats().totalMin)}`;
 }
 function openEventModal(id) {
   editingEventId = id || null;
@@ -2039,8 +2043,8 @@ function normModel(m) {
   return m;
 }
 const PRICE_MODELS = [
-  { key: 'flash', name: 'deepseek-v4-flash', label: '⚡ deepseek-v4-flash' },
-  { key: 'pro', name: 'deepseek-v4-pro', label: '🚀 deepseek-v4-pro' },
+  { key: 'flash', name: 'deepseek-v4-flash', label: 'deepseek-v4-flash' },
+  { key: 'pro', name: 'deepseek-v4-pro', label: 'deepseek-v4-pro' },
 ];
 const DEFAULT_MODEL_PRICE = () => ({ off: { hit: 0.25, miss: 1, out: 4 }, peak: { hit: 0.5, miss: 2, out: 8 } });
 /* 每模型独立单价：settings.prices.models[模型名] = { off:{hit,miss,out}, peak:{hit,miss,out} } */
@@ -2100,7 +2104,7 @@ function renderUsPrices() {
       <label class="inline-field">未命中 <input id="pr-${pm.key}-${period}-miss" type="number" min="0" step="0.1" style="width:64px" value="${(pr[period] || {}).miss ?? ''}" /></label>
       <label class="inline-field">输出 <input id="pr-${pm.key}-${period}-out" type="number" min="0" step="0.1" style="width:64px" value="${(pr[period] || {}).out ?? ''}" /></label>
     </div>`;
-    return `<div class="us-price-group"><div class="us-price-title">${pm.label}</div>${row('off', '🌙 空闲')}${row('peak', '☀️ 高峰')}</div>`;
+    return `<div class="us-price-group"><div class="us-price-title">${pm.label}</div>${row('off', '空闲')}${row('peak', '高峰')}</div>`;
   }).join('');
 }
 /* 旧版统计数据结构迁移：旧 promptTokens 视作未命中输入、completionTokens 视作输出、全归高峰时段 */
@@ -2222,7 +2226,7 @@ function aggregateRange(range) {
 }
 /* 官方余额接口（api.deepseek.com/user/balance，Bearer Key） */
 async function fetchBalance() {
-  if (!agentCfg.apiKey) return toast('请先在智能体页配置 DeepSeek API Key', 'warn');
+  if (!agentCfg.apiKey) return toast('请先到「设置」页配置 DeepSeek API Key', 'warn');
   try {
     const resp = await fetch(agentCfg.baseUrl.replace(/\/+$/, '') + '/user/balance', {
       headers: { Authorization: 'Bearer ' + agentCfg.apiKey },
@@ -2256,7 +2260,7 @@ function renderBalance() {
       <span>${b && b.error
         ? '余额获取失败：' + esc(b.error) + '（可能为跨域限制；不影响本地消耗统计）'
         : '尚未获取官方余额，点击右侧按钮查询'}</span>
-      <button class="btn primary" data-act="refresh">🔄 刷新余额</button>
+      <button class="btn primary" data-act="refresh">刷新余额</button>
     </div>`;
     return;
   }
@@ -2264,16 +2268,16 @@ function renderBalance() {
   const fmtBal = v => cur + fmtNum(Number(v || 0));
   const upd = b.time ? `更新于 ${fmtSessTime(b.time)}` : '';
   box.innerHTML = `<div class="us-bal-cards">
-    <div class="card stat"><div class="stat-icon bg-green">💰</div><div class="stat-info">
+    <div class="card stat"><div class="stat-icon bg-green">总</div><div class="stat-info">
       <div class="stat-label">总余额</div><div class="stat-value">${fmtBal(b.total)}</div>
       <div class="stat-sub">DeepSeek 官方账户</div></div></div>
-    <div class="card stat"><div class="stat-icon bg-blue">🎁</div><div class="stat-info">
+    <div class="card stat"><div class="stat-icon bg-blue">赠</div><div class="stat-info">
       <div class="stat-label">赠送余额</div><div class="stat-value">${fmtBal(b.granted)}</div>
       <div class="stat-sub">平台赠送额度</div></div></div>
-    <div class="card stat"><div class="stat-icon bg-orange">💳</div><div class="stat-info">
+    <div class="card stat"><div class="stat-icon bg-orange">充</div><div class="stat-info">
       <div class="stat-label">充值余额</div><div class="stat-value">${fmtBal(b.topped)}</div>
       <div class="stat-sub">充值金额</div></div></div>
-    <button class="btn ghost us-bal-refresh" data-act="refresh">🔄 刷新</button>
+    <button class="btn ghost us-bal-refresh" data-act="refresh">刷新</button>
     <span class="us-bal-time">${upd}</span>
   </div>`;
 }
@@ -2364,7 +2368,7 @@ let amapInfoWindow = null; // 信息窗体
 let amapCurrentPois = [];  // 当前搜索结果
 let amapHighlight = null;  // 建筑位置高亮框（虚线+淡蓝透明）
 let amapFenceOverlays = []; // 围栏地图覆盖物
-let amapFenceFlags = [];     // 围栏定位标志（🚩）
+let amapFenceFlags = [];     // 围栏定位标志
 let mouseToolInstance = null; // 围栏绘制工具
 let editingFenceId = null;    // 重绘的围栏 id（空=新建）
 let fenceDraftName = '';      // 绘制中的围栏名
@@ -2392,7 +2396,7 @@ function updateMapStatus(text) {
 }
 /* 高德 Web服务 API 通用请求（CORS 受限时给出提示） */
 async function amapGet(path, params, version = 'v3') {
-  if (!mapCfg.key) return { error: '未配置高德 API Key，请先在地图页「⚙️ Key 配置」填写并测试' };
+  if (!mapCfg.key) return { error: '未配置高德 API Key，请先到「设置」页填写并测试' };
   const qs = new URLSearchParams(Object.assign({ key: mapCfg.key }, params)).toString();
   let resp;
   try {
@@ -2428,7 +2432,7 @@ async function ensureMapReady() {
 }
 function renderMapEmpty(text) {
   const el = $('#map-container');
-  el.innerHTML = `<div class="map-empty">${esc(text)}<br /><button class="btn primary" data-act="config" style="margin-top:10px">⚙️ 配置 Key</button></div>`;
+  el.innerHTML = `<div class="map-empty">${esc(text)}<br /><button class="btn primary" data-act="config" style="margin-top:10px">配置 Key</button></div>`;
 }
 function clearMarkers() {
   if (!amapMap) return;
@@ -2532,7 +2536,7 @@ function renderFences() {
         if (pickFenceHandler) { pickFenceHandler(e); return; }
         if (centerPickHandler) { centerPickHandler(e); return; }
         if (fencesInteractive) {
-          showInfo('<b>⛓️ ' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形电子围栏' : '多边形电子围栏'), center);
+          showInfo('<b>' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形电子围栏' : '多边形电子围栏'), center);
         }
       });
       amapMap.add(o);
@@ -2547,26 +2551,28 @@ function renderFenceList() {
   if (!box) return;
   if (count) count.textContent = fences.length ? `共 ${fences.length} 个电子围栏` : '';
   if (!fences.length) {
-    box.innerHTML = '<div class="tp-empty">暂无电子围栏<br>点击顶部「⛓️ 电子围栏」按钮在地图上绘制</div>';
+    box.innerHTML = '<div class="tp-empty">暂无电子围栏<br>点击顶部「电子围栏」按钮在地图上绘制</div>';
     return;
   }
   box.innerHTML = fences.map(f => `<div class="fence-item" data-id="${f.id}">
-    <div class="fence-icon">${f.type === 'circle' ? '◯' : '⬠'}</div>
-    <div class="fence-info">
-      <div class="fence-name">${esc(f.name)}</div>
-      <div class="fence-meta">${f.type === 'circle' ? '圆形 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形 · ' + (f.polygon ? f.polygon.path.length : 0) + ' 个顶点'}</div>
+    <div class="fence-top">
+      <div class="fence-icon">${f.type === 'circle' ? '◯' : '⬠'}</div>
+      <div class="fence-info">
+        <div class="fence-name" title="${esc(f.name)}">${esc(f.name)}</div>
+        <div class="fence-meta">${f.type === 'circle' ? '圆形 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形 · ' + (f.polygon ? f.polygon.path.length : 0) + ' 个顶点'}</div>
+      </div>
     </div>
     <div class="fence-ops">
-      <button title="定位" data-act="locate">📍</button>
-      <button title="改名" data-act="rename">✏️</button>
-      <button title="重绘" data-act="redraw">🔄</button>
-      <button title="删除" class="danger" data-act="del">🗑</button>
+      <button title="在地图上定位该围栏" data-act="locate">定位</button>
+      <button title="修改围栏名称" data-act="rename">编辑</button>
+      <button title="重新绘制该围栏" data-act="redraw">重绘</button>
+      <button title="删除该围栏" class="danger" data-act="del">删除</button>
     </div>
   </div>`).join('');
 }
 function openFenceModal() {
   if (!mapCfg.key) { toast('请先配置高德 Key', 'warn'); openMapConfigModal(); return; }
-  $('#fence-modal-title').textContent = '⛓️ 新建电子围栏';
+  $('#fence-modal-title').textContent = '新建电子围栏';
   $('#fence-name').value = '';
   $('#fence-radius').value = 200;
   $('#fence-draw-mode').value = 'free';
@@ -2591,7 +2597,7 @@ async function startCenterPick(name, radius) {
   try {
     await ensureMapReady();
     setFencesInteractive(false); // 旧围栏不可点击，让点击穿透到地图
-    showDrawBanner(`⛓️ 请在地图上单击选择圆心位置（半径 ${radius} 米）`, false);
+    showDrawBanner(`请在地图上单击选择圆心位置（半径 ${radius} 米）`, false);
     let lastPickTs = 0;
     centerPickHandler = e => {
       if (!e || !e.lnglat) return;
@@ -2645,7 +2651,7 @@ async function startFencePointPick(name, fid) {
     pickConstraintFenceId = fid;
     pickedFencePoints = [];
     zoomToFence(cf); // 定位到约束围栏，便于对照选点
-    showDrawBanner(`🎯 请在「${cf.name}」内依次单击选择点（≥3 个），点「✅ 完成」生成围栏`, true);
+    showDrawBanner(`请在「${cf.name}」内依次单击选择点（≥3 个），点「完成」生成围栏`, true);
     let lastPickTs = 0;
     pickFenceHandler = e => {
       if (!e || !e.lnglat) return;
@@ -2666,7 +2672,7 @@ async function startFencePointPick(name, fid) {
       });
       amapMap.add(dot);
       amapFenceFlags.push(dot);
-      $('#map-draw-text').textContent = `🎯 已选 ${pickedFencePoints.length} 个点，继续单击或点「✅ 完成」`;
+      $('#map-draw-text').textContent = `已选 ${pickedFencePoints.length} 个点，继续单击或点「完成」`;
     };
     amapMap.on('click', pickFenceHandler);
   } catch (err) {
@@ -2737,8 +2743,8 @@ async function startFenceDraw(type, name) {
     mouseToolInstance.on('draw', onFenceDrawn);
     // 顶部绘制提示浮条（无完成按钮）
     showDrawBanner(type === 'polygon'
-      ? '⛓️ 正在绘制多边形围栏：单击添加顶点，双击结束'
-      : '⛓️ 正在绘制圆形围栏：单击定圆心，拖动定半径', false);
+      ? '正在绘制多边形围栏：单击添加顶点，双击结束'
+      : '正在绘制圆形围栏：单击定圆心，拖动定半径', false);
     updateMapStatus('围栏绘制中，见地图顶部提示');
   } catch (err) {
     toast('启动绘制失败：' + (err.message || err), 'err');
@@ -2772,7 +2778,7 @@ function onFenceDrawn(e) {
   }
   save(LS.fences, fences);
   renderFences();
-  updateMapStatus('围栏已保存，可在右侧「⛓️ 围栏」面板管理');
+  updateMapStatus('围栏已保存，可在右侧「围栏」面板管理');
 }
 function zoomToFence(f) {
   if (!amapMap || !f) return;
@@ -2791,17 +2797,17 @@ function zoomToFence(f) {
     }
   }
   if (!center) return;
-  // 第二步：动画结束后（moveend）再生成 🚩 标志并弹信息窗；兜底定时器防止地图未移动不触发事件
+  // 第二步：动画结束后（moveend）再生成围栏标志并弹信息窗；兜底定时器防止地图未移动不触发事件
   let settled = false;
   const done = () => {
     if (settled) return;
     settled = true;
     try { amapMap.off('moveend', done); } catch (e) { /* 忽略 */ }
-    const flag = makeLabelMarker(center, '🚩', f.name, '#10b981');
-    flag.on('click', () => showInfo('<b>⛓️ ' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形围栏 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形围栏 · ' + f.polygon.path.length + ' 个顶点'), center));
+    const flag = makeLabelMarker(center, '围', f.name, '#10b981');
+    flag.on('click', () => showInfo('<b>' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形围栏 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形围栏 · ' + f.polygon.path.length + ' 个顶点'), center));
     amapMap.add(flag);
     amapFenceFlags.push(flag);
-    showInfo('<b>⛓️ ' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形围栏 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形围栏 · ' + f.polygon.path.length + ' 个顶点'), center);
+    showInfo('<b>' + esc(f.name) + '</b><br />' + (f.type === 'circle' ? '圆形围栏 · 半径 ' + Math.round(f.circle.radius) + ' 米' : '多边形围栏 · ' + f.polygon.path.length + ' 个顶点'), center);
   };
   amapMap.on('moveend', done);
   setTimeout(done, 900);
@@ -2821,7 +2827,7 @@ function stopRanging() {
   }
   rangingActive = false;
   const b = $('#btn-map-ruler');
-  if (b) { b.classList.remove('toggle-on'); b.textContent = '📏 测距'; }
+  if (b) { b.classList.remove('toggle-on'); b.textContent = '测距'; }
 }
 async function toggleRanging() {
   if (!mapCfg.key) { toast('请先配置 Key', 'warn'); openMapConfigModal(); return; }
@@ -2834,7 +2840,7 @@ async function toggleRanging() {
       rangingActive = true;
       const b = $('#btn-map-ruler');
       b.classList.add('toggle-on');
-      b.textContent = '📏 测距中…';
+      b.textContent = '测距中…';
       updateMapStatus('测距中：单击添加测距点，双击结束');
     } else {
       stopRanging();
@@ -2886,15 +2892,15 @@ function renderRouteSummary(modeName, oName, dName, routes) {
   const tabBtn = document.querySelector('#map-side-tabs [data-tab="results"]');
   if (tabBtn) tabBtn.click();
   const box = $('#map-results');
-  const note = lastRouteMeta && lastRouteMeta.note ? `<div class="route-summary route-alt">ℹ️ ${esc(lastRouteMeta.note)}</div>` : '';
+  const note = lastRouteMeta && lastRouteMeta.note ? `<div class="route-summary route-alt">${esc(lastRouteMeta.note)}</div>` : '';
   let alt = 0;
   box.innerHTML =
-    `<div class="route-edit-row"><button class="btn ghost btn-sm" data-act="edit-query">✏️ 修改查询条件</button></div>
-    <div class="route-summary">🧭 <b>${esc(modeName)}</b>：${esc(oName)} → ${esc(dName)}</div>
+    `<div class="route-edit-row"><button class="btn ghost btn-sm" data-act="edit-query">修改查询条件</button></div>
+    <div class="route-summary"><b>${esc(modeName)}</b>：${esc(oName)} → ${esc(dName)}</div>
     ${note}` +
     routes.map((rt, i) => {
       const isMain = i === plannedMainIdx;
-      const label = isMain ? '🏆 <b>最优方案</b>' : '<b>备选方案 ' + (++alt) + '</b>';
+      const label = isMain ? '<b>最优方案</b>' : '<b>备选方案 ' + (++alt) + '</b>';
       return `<div class="route-summary route-pick-card ${isMain ? '' : 'route-alt'}" data-act="pick-route" data-idx="${i}">
       ${label}：距离 <b>${fmtRouteDist(rt.distance)}</b> · 预计 <b>约 ${fmtRouteDur(rt.duration)}</b>
       ${rt.segDesc ? `<div class="route-seg">${esc(rt.segDesc)}</div>` : ''}
@@ -2933,19 +2939,19 @@ function parseRouteDataList(r, mode) {
       (t.segments || []).forEach(seg => {
         if (seg.walking && seg.walking.steps) {
           seg.walking.steps.forEach(st => pushPolyline(st.polyline, points));
-          if (seg.walking.distance) segs.push('🚶' + (seg.walking.distance >= 1000 ? (seg.walking.distance / 1000).toFixed(1) + 'km' : Math.round(seg.walking.distance) + 'm'));
+          if (seg.walking.distance) segs.push('步行 ' + (seg.walking.distance >= 1000 ? (seg.walking.distance / 1000).toFixed(1) + 'km' : Math.round(seg.walking.distance) + 'm'));
         }
         if (seg.bus && seg.bus.buslines) {
           seg.bus.buslines.forEach(bl => pushPolyline(bl.polyline, points));
           const names = seg.bus.buslines.map(b => b.name).filter(Boolean);
-          if (names.length) { segs.push('🚌' + names.join('/')); hasBus = true; }
+          if (names.length) { segs.push('公交 ' + names.join('/')); hasBus = true; }
         }
         if (seg.railway) {
           pushPolyline(seg.railway.alt_polyline, points);
           if (seg.railway.via_stops) seg.railway.via_stops.forEach(v => {
             if (v.location) { const [lng, lat] = v.location.split(',').map(Number); if (!isNaN(lng) && !isNaN(lat)) points.push([lng, lat]); }
           });
-          if (seg.railway.name) segs.push('🚇' + seg.railway.name);
+          if (seg.railway.name) segs.push('地铁 ' + seg.railway.name);
           hasRailway = true;
         }
       });
@@ -2965,8 +2971,8 @@ function showRoutePickBanner(target) {
   if (b) {
     b.classList.remove('hidden');
     $('#map-route-text').textContent = target === 'origin'
-      ? '📍 为「起点」选点：单击卡片查看位置，双击卡片确认选择'
-      : '📍 为「终点」选点：单击卡片查看位置，双击卡片确认选择';
+      ? '为「起点」选点：单击卡片查看位置，双击卡片确认选择'
+      : '为「终点」选点：单击卡片查看位置，双击卡片确认选择';
   }
 }
 function hideRoutePickBanner() {
@@ -3067,7 +3073,7 @@ function renderRoutePicked(target) {
   const el = $('#route-' + target + '-picked');
   if (!sel) { el.classList.add('hidden'); el.innerHTML = ''; return; }
   el.classList.remove('hidden');
-  el.innerHTML = `<span class="route-picked-info">✔ 已选：<b>${esc(sel.name)}</b>${sel.address ? ' · ' + esc(sel.address) : ''}</span>
+  el.innerHTML = `<span class="route-picked-info">已选：<b>${esc(sel.name)}</b>${sel.address ? ' · ' + esc(sel.address) : ''}</span>
     <button class="route-picked-clear" data-clear="${target}" title="清除选择">✕</button>`;
 }
 async function planRoute() {
@@ -3169,7 +3175,7 @@ function fmtRouteDur(sec) {
   if (sec >= 3600) return Math.floor(sec / 3600) + ' 小时 ' + Math.round((sec % 3600) / 60) + ' 分钟';
   return Math.round(sec / 60) + ' 分钟';
 }
-/* 带文字标注的标记（水滴形，label 如 1/2/3 或 📍） */
+/* 带文字标注的标记（水滴形，label 如 1/2/3 或单字标记） */
 function makeLabelMarker(lnglat, label, title, color) {
   const content = `<div class="map-pin" style="background:${color || '#4f6ef7'}" title="${esc(title)}"><span>${esc(label)}</span></div>`;
   return new AMap.Marker({
@@ -3206,7 +3212,7 @@ function centerMap(lnglat, title, isCurrent) {
   try { if (amapMap.stopMove) amapMap.stopMove(); } catch (e) { /* 2.0 可能无此方法 */ }
   amapMap.setZoomAndCenter(isCurrent ? 15 : 13, lnglat);
   clearMarkers();
-  const marker = makeLabelMarker(lnglat, '📍', title, '#ef4444');
+  const marker = makeLabelMarker(lnglat, '我', title, '#ef4444');
   marker.on('click', () => showInfo(esc(title), lnglat));
   amapMap.add(marker);
   amapMarkers.push(marker);
@@ -3224,7 +3230,7 @@ async function initMapPage() {
   try {
     await ensureMapReady();
     renderFences();
-    updateMapStatus('地图已就绪，可搜索地点、绘制围栏或点击「📍 定位」');
+    updateMapStatus('地图已就绪，可搜索地点、绘制围栏或点击「定位」');
   } catch (err) {
     renderMapEmpty('地图加载失败：' + (err.message || err));
     updateMapStatus('地图加载失败');
@@ -3295,11 +3301,12 @@ function renderMapResults(pois, keyword) {
   </div>`).join('');
 }
 /* Key 配置弹窗 */
+/* 打开地图 API 配置（已迁入「设置」页） */
 function openMapConfigModal() {
-  $('#map-key').value = mapCfg.key || '';
-  $('#map-sec').value = mapCfg.securityCode || '';
-  $('#modal-mapcfg').classList.remove('hidden');
-  $('#map-key').focus();
+  switchPage('settings');
+  renderSettingsStatus();
+  const k = $('#map-key');
+  if (k) setTimeout(() => k.focus(), 80);
 }
 /* 浏览器全屏切换（全屏后 AMap 需 resize） */
 function toggleMapFullscreen() {
@@ -3318,11 +3325,11 @@ async function saveAndTestMapConfig() {
   if (!key) return toast('请输入 API Key', 'warn');
   mapCfg = { key, securityCode: sec };
   save(LS.map, mapCfg);
+  renderSettingsStatus();
   updateMapStatus('正在测试 Key…');
   const r = await amapGet('ip', {});
   if (r.status === '1') {
-    closeModal('modal-mapcfg');
-    toast('Key 测试成功 ✅');
+    toast('Key 测试成功');
     if (window.AMap) {
       toast('地图 SDK 已用旧 Key 加载，请刷新页面（Ctrl+F5）后生效', 'warn');
     } else {
@@ -3532,7 +3539,7 @@ function tryRenderMetroSdkResult(info) {
     return `${lineName}：${from} → ${to}${passTxt}`;
   });
   box.innerHTML = `<div class="metro-route-card best">
-    <div class="metro-route-head"><span class="tag">🏆 推荐路线</span><span class="time">共 ${segs.length} 条线路 · 换乘 ${Math.max(0, segs.length - 1)} 次</span></div>
+    <div class="metro-route-head"><span class="tag">推荐路线</span><span class="time">共 ${segs.length} 条线路 · 换乘 ${Math.max(0, segs.length - 1)} 次</span></div>
     <div class="metro-route-seg">${rows.map(esc).join('<br>')}</div>
   </div>`;
   return true;
@@ -3596,10 +3603,10 @@ function renderMulti() {
         <select class="multi-zoom" data-idx="${i}" title="页面缩放：缩小时网页按完整桌面版式排版后整体缩小，双开/四开也能看全内容">${zoomOpts}</select>
         <button class="btn ghost btn-sm" data-act="go" data-idx="${i}" title="加载/刷新">前往</button>
         <button class="btn ghost btn-sm" data-act="open" data-idx="${i}" title="新标签页打开">↗</button>
-        <button class="btn ghost btn-sm" data-act="pop" data-idx="${i}" title="独立窗口打开（绕过嵌入限制/第三方Cookie拦截）">🪟</button>
-        <button class="btn ghost btn-sm" data-act="zoom" data-idx="${i}" title="单屏放大">⛶</button>
-        <button class="btn ghost btn-sm" data-act="detect" data-idx="${i}" title="可嵌入性检测">🔍</button>
-        ${expanded ? `<button class="btn ghost danger btn-sm" data-act="unzoom" title="退出放大">✖</button>` : ''}
+        <button class="btn ghost btn-sm" data-act="pop" data-idx="${i}" title="独立窗口打开（绕过嵌入限制/第三方Cookie拦截）">外置</button>
+        <button class="btn ghost btn-sm" data-act="zoom" data-idx="${i}" title="单屏放大">放大</button>
+        <button class="btn ghost btn-sm" data-act="detect" data-idx="${i}" title="可嵌入性检测">检测</button>
+        ${expanded ? `<button class="btn ghost danger btn-sm" data-act="unzoom" title="退出放大">还原</button>` : ''}
       </div>
       <div class="multi-frame-wrap">
         <iframe class="multi-frame" data-idx="${i}" src="${esc(s.url)}" loading="lazy" allowfullscreen allow="camera; microphone; geolocation; autoplay; clipboard-write; fullscreen"${frameStyle}></iframe>
@@ -3730,10 +3737,10 @@ function focusPhaseSec(mode) {
   return Math.max(1, +(long ? s.longMin : s.breakMin) || 5) * 60;
 }
 function focusModeLabel(mode) {
-  if (mode === 'focus') return '🍅 专注';
+  if (mode === 'focus') return '专注';
   const s = focusData.settings;
   const long = focusData.timer && (focusData.timer.cycleDone || 0) >= (s.longAfter || 4);
-  return long ? '☕ 长休息' : '☕ 休息';
+  return long ? '长休息' : '休息';
 }
 function focusPersist() { save(LS.focus, focusData); }
 /* Web Audio 提示音（正弦波哔声，无音频文件依赖） */
@@ -3812,7 +3819,7 @@ function focusPhaseDone() {
     t.endAt = Date.now() + t.totalSec * 1000;
     focusPersist();
     focusBeep(3);
-    toast(`🍅 完成一个番茄（${minutes} 分钟）！进入${t.cycleDone >= s.longAfter ? '长' : ''}休息 ${Math.round(t.totalSec / 60)} 分钟`);
+    toast(`完成一个番茄（${minutes} 分钟）！进入${t.cycleDone >= s.longAfter ? '长' : ''}休息 ${Math.round(t.totalSec / 60)} 分钟`);
     renderFocus();
     return;
   }
@@ -3931,7 +3938,7 @@ function renderFocus() {
   bar.style.strokeDashoffset = C * (1 - remainSec / totalSec);
   $('#focus-sub').textContent = !active ? '准备开始' : (t.running ? (mode === 'focus' ? (t.eventName ? '专注 · ' + t.eventName : '专注中') : '休息中') : '已暂停');
   const tg = $('#btn-focus-toggle');
-  tg.textContent = !active ? '▶ 开始专注' : (t.running ? '⏸ 暂停' : '▶ 继续');
+  tg.textContent = !active ? '开始专注' : (t.running ? '暂停' : '继续');
   $('#btn-focus-skip').classList.toggle('hidden', !active);
   $('#btn-focus-stop').classList.toggle('hidden', !(t && t.mode === 'focus'));
   // 本轮番茄点
@@ -3967,7 +3974,7 @@ function renderFocus() {
     </div>`).join('');
   }
   // 标签页标题倒计时
-  document.title = (active && t.running) ? `${mm}:${ss} ${mode === 'focus' ? '🍅' : '☕'} Table-Agent` : 'Table-Agent';
+  document.title = (active && t.running) ? `${mm}:${ss} ${mode === 'focus' ? '专注' : '休息'} · Table-Agent` : 'Table-Agent';
 }
 
 /* ==================== 论文撰写 ==================== */
@@ -4031,7 +4038,7 @@ function renderPaperStatus() {
   const el = $('#paper-status');
   if (!el) return;
   el.innerHTML = paperRecognizing
-    ? '🎤 正在聆听，说出的内容将插入光标处…（Alt+V 停止）'
+    ? '正在聆听，说出的内容将插入光标处…（Alt+V 停止）'
     : ('自动保存 · <span id="paper-count">' + paperCount() + ' 字</span>');
 }
 function renderPaperOptions() {
@@ -4127,7 +4134,7 @@ function paperToggleBold() {
   if (!ed) return;
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || !ed.contains(sel.anchorNode)) {
-    toast('请先用鼠标选中要加粗的文字，再点「𝐁 加粗」（或在编辑框内用 Ctrl+B）', 'warn');
+    toast('请先用鼠标选中要加粗的文字，再点「加粗」（或在编辑框内用 Ctrl+B）', 'warn');
     return;
   }
   ed.focus();
@@ -4229,11 +4236,11 @@ async function paperCopyAll() {
           }),
         ]);
       }
-      toast('已复制（HTML+RTF 双格式）。Word 粘贴请选「保留源格式」；若仍不对齐，请用「⬇ 导出 Word」打开文件（100% 保真）');
+      toast('已复制（HTML+RTF 双格式）。Word 粘贴请选「保留源格式」；若仍不对齐，请用「导出 Word」打开文件（100% 保真）');
       return;
     }
   } catch (e) { /* 剪贴板 API 不可用 → 兼容复制（同一份带样式 HTML + RTF） */ }
-  if (paperCopyViaExec(body, rtf)) toast('已复制（兼容模式）。Word 粘贴请选「保留源格式」；若仍不对齐，请用「⬇ 导出 Word」');
+  if (paperCopyViaExec(body, rtf)) toast('已复制（兼容模式）。Word 粘贴请选「保留源格式」；若仍不对齐，请用「导出 Word」');
   else toast('复制失败，请手动 Ctrl+A 后 Ctrl+C', 'warn');
 }
 /* 导出 Word 兼容文档（HTML 结构 .doc）：Word 打开即完整格式，与粘贴模式无关——100% 保真的兜底路径 */
@@ -4262,7 +4269,7 @@ function resetPaperVoiceUI() {
   paperRecognizing = false;
   paperRecognition = null;
   const btn = $('#btn-paper-voice');
-  if (btn) { btn.classList.remove('listening'); btn.textContent = '🎤 语音输入 (Alt+V)'; }
+  if (btn) { btn.classList.remove('listening'); btn.textContent = '语音输入 (Alt+V)'; }
   renderPaperStatus();
 }
 function stopPaperVoice() {
@@ -4283,7 +4290,7 @@ function togglePaperVoice() {
   paperRecognition.onstart = () => {
     paperRecognizing = true;
     btn.classList.add('listening');
-    btn.textContent = '🔴 聆听中 (Alt+V 停止)';
+    btn.textContent = '聆听中 (Alt+V 停止)';
     renderPaperStatus();
   };
   paperRecognition.onresult = e => {
@@ -4309,6 +4316,93 @@ function togglePaperVoice() {
     resetPaperVoiceUI();
     toast('启动语音识别失败：' + (err.message || err), 'err');
   }
+}
+
+/* ==================== 设置（主题皮肤 / 接口状态） ==================== */
+const THEMES = [
+  { id: 'indigo', name: '靛蓝', desc: '简约默认 · 中性灰 + 靛蓝', accent: '#4f46e5' },
+  { id: 'blue', name: '经典蓝', desc: '企业级稳重蓝', accent: '#2563eb' },
+  { id: 'teal', name: '青碧', desc: '清新科技感', accent: '#0d9488' },
+  { id: 'green', name: '翡翠绿', desc: '自然护眼', accent: '#059669' },
+  { id: 'violet', name: '紫罗兰', desc: '优雅神秘', accent: '#7c3aed' },
+  { id: 'rose', name: '玫瑰', desc: '温柔现代', accent: '#e11d48' },
+  { id: 'orange', name: '琥珀橙', desc: '活力热情', accent: '#ea580c' },
+  { id: 'slate', name: '石墨灰', desc: '极简商务', accent: '#475569' },
+  { id: 'dark', name: '深色', desc: '夜间护眼', accent: '#101319' },
+];
+let theme = load(LS.theme, 'indigo');
+function applyTheme(id) {
+  theme = THEMES.some(t => t.id === id) ? id : 'indigo';
+  save(LS.theme, theme);
+  document.documentElement.setAttribute('data-theme', theme);
+  renderThemes();
+}
+function renderThemes() {
+  const grid = $('#theme-grid');
+  if (!grid) return;
+  grid.innerHTML = THEMES.map(t => `<button type="button" class="theme-card ${t.id === theme ? 'active' : ''}" data-theme="${t.id}" title="${t.name} · ${t.desc}">
+    <span class="theme-swatch" style="background:${t.accent}"></span>
+    <span class="theme-info"><b>${t.name}</b><i>${t.desc}</i></span>
+  </button>`).join('');
+}
+function renderSettingsStatus() {
+  const a = $('#set-agent-status');
+  if (a) a.textContent = agentCfg.apiKey ? ('已配置 · ' + agentCfg.model) : '未配置';
+  const m = $('#set-map-status');
+  if (m) m.textContent = mapCfg.key ? '已配置' : '未配置';
+}
+/* 设置页表单回填（智能体工具修改配置后同步显示） */
+function renderAgentApiForm() {
+  const k = $('#ag-key'); if (k) k.value = agentCfg.apiKey;
+  const b = $('#ag-base'); if (b) b.value = agentCfg.baseUrl;
+  const m = $('#ag-model'); if (m) m.value = agentCfg.model;
+  const v = $('#ag-voicefix'); if (v) v.checked = agentCfg.voiceFix !== false;
+}
+function renderMapApiForm() {
+  const k = $('#map-key'); if (k) k.value = mapCfg.key || '';
+  const s = $('#map-sec'); if (s) s.value = mapCfg.securityCode || '';
+}
+/* 智能体（DeepSeek）接口连通性测试核心：最小请求验证 Key/地址/模型 */
+async function testAgentApiCore(cfg) {
+  const key = (cfg && cfg.apiKey) || agentCfg.apiKey;
+  const base = ((cfg && cfg.baseUrl) || agentCfg.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
+  const model = (cfg && cfg.model) || agentCfg.model || 'deepseek-v4-flash';
+  if (!key) return { ok: false, error: '未配置 API Key，请先填写 Key（或先在「保存配置」）' };
+  try {
+    const t0 = Date.now();
+    const resp = await fetch(base + '/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }),
+    });
+    const ms = Date.now() - t0;
+    if (resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      if (data.usage) recordUsage(model, data.usage); // 测试消耗也计入用量统计
+      return { ok: true, model, baseUrl: base, latencyMs: ms, note: `连接成功（${ms}ms），模型 ${model} 可用` };
+    }
+    let msg = 'HTTP ' + resp.status;
+    try {
+      const j = await resp.json();
+      msg = (j && j.error && j.error.message) || msg;
+    } catch (e) { /* 保留状态码 */ }
+    return { ok: false, error: '连接失败：' + msg + '（请检查 Key / 接口地址 / 模型；跨域问题可在接口地址填代理）' };
+  } catch (e) {
+    return { ok: false, error: '连接失败：' + (e.message || e) + '（可能是跨域(CORS)或网络问题，可在接口地址填代理）' };
+  }
+}
+/* 设置页「测试连接」按钮：以表单当前值测试（未填写项回退已保存配置） */
+async function testAgentApiFromForm() {
+  const cfg = {
+    apiKey: $('#ag-key').value.trim() || agentCfg.apiKey,
+    baseUrl: $('#ag-base').value.trim() || agentCfg.baseUrl,
+    model: $('#ag-model').value || agentCfg.model,
+  };
+  const btn = $('#btn-agent-test');
+  if (btn) { btn.disabled = true; btn.textContent = '测试中…'; }
+  const r = await testAgentApiCore(cfg);
+  if (btn) { btn.disabled = false; btn.textContent = '测试连接'; }
+  return r;
 }
 
 const TOOLS = [
@@ -4374,7 +4468,11 @@ const TOOLS = [
   { type: 'function', function: { name: 'paper_append', description: '向论文撰写页文本框追加文本（自动另起一行，追加到文末）', parameters: { type: 'object', properties: { text: { type: 'string', description: '要追加的文本内容' } }, required: ['text'] } } },
   { type: 'function', function: { name: 'paper_set_font', description: '设置论文文本框的字号与字体（Word 兼容）。size 为磅值 8-72（如 12=小四/10.5=五号/14=四号/16=三号）；font 为字体名（宋体/黑体/楷体/仿宋/微软雅黑/等线/Times New Roman/Arial/Calibri 等）', parameters: { type: 'object', properties: { size: { type: 'number' }, font: { type: 'string' } } } } },
   { type: 'function', function: { name: 'paper_clear', description: '清空论文撰写页文本框的全部内容（慎用）', parameters: { type: 'object', properties: {} } } },
-  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper'] } }, required: ['page'] } } },
+  { type: 'function', function: { name: 'set_theme', description: '切换看板主题皮肤。theme 可为主题 id（indigo/blue/teal/green/violet/rose/orange/slate/dark）或中文名（靛蓝/经典蓝/青碧/翡翠绿/紫罗兰/玫瑰/琥珀橙/石墨灰/深色）', parameters: { type: 'object', properties: { theme: { type: 'string', description: '主题 id 或中文名' } }, required: ['theme'] } } },
+  { type: 'function', function: { name: 'set_agent_api', description: '设置智能体（DeepSeek）接口配置：api_key 为 DeepSeek API Key；base_url 默认 https://api.deepseek.com（跨域时可用代理地址）；model 可选 deepseek-v4-flash / deepseek-v4-pro；voice_fix 为布尔值（语音识别后是否 AI 校正同音字）。至少提供一项', parameters: { type: 'object', properties: { api_key: { type: 'string' }, base_url: { type: 'string' }, model: { type: 'string' }, voice_fix: { type: 'boolean' } } } } },
+  { type: 'function', function: { name: 'set_map_api', description: '设置高德地图 API：api_key 为高德 Key（Web服务与 JS API 共用）；security_code 为配套安全密钥；test 传 true 时保存后立即用 IP 定位接口测试 Key 有效性', parameters: { type: 'object', properties: { api_key: { type: 'string' }, security_code: { type: 'string' }, test: { type: 'boolean' } }, required: ['api_key'] } } },
+  { type: 'function', function: { name: 'test_agent_api', description: '测试智能体（DeepSeek）接口连通性：用已保存配置（或临时传入 api_key/base_url/model）发送一个最小请求，验证 Key 与接口地址是否可用', parameters: { type: 'object', properties: { api_key: { type: 'string' }, base_url: { type: 'string' }, model: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'show_page', description: '切换看板页面', parameters: { type: 'object', properties: { page: { type: 'string', enum: ['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper', 'settings'] } }, required: ['page'] } } },
   { type: 'function', function: { name: 'get_settings', description: '获取看板设置（开学日期、节数等）', parameters: { type: 'object', properties: {} } } },
 ];
 const TOOL_LABELS = {
@@ -4398,6 +4496,7 @@ const TOOL_LABELS = {
   multi_load_group: '加载网址组', multi_expand: '单屏放大',
   focus_start: '开始专注', focus_stop: '结束专注', focus_status: '专注统计',
   paper_get: '读取论文', paper_append: '论文追加文本', paper_set_font: '论文格式', paper_clear: '清空论文',
+  set_theme: '切换主题', set_agent_api: '配置智能体API', set_map_api: '配置地图API', test_agent_api: '测试智能体接口',
 };
 
 function findBookmark(keyword) {
@@ -4661,13 +4760,80 @@ async function executeTool(name, args) {
       paperClearContent();
       return { ok: true, cleared: 1, note: '论文内容已清空' };
     }
+    case 'set_theme': {
+      const raw = String((args && args.theme) || '').trim();
+      const t = THEMES.find(x => x.id === raw.toLowerCase())
+        || THEMES.find(x => x.name === raw)
+        || THEMES.find(x => x.name.toLowerCase() === raw.toLowerCase());
+      if (!t) return { error: '未找到该主题。可用主题（id/中文名）：' + THEMES.map(x => `${x.id}/${x.name}`).join('、') };
+      applyTheme(t.id);
+      toast('已切换主题：' + t.name);
+      return { ok: true, theme: t.id, name: t.name, note: '主题已切换为「' + t.name + '」，全站即时生效并自动保存' };
+    }
+    case 'set_agent_api': {
+      const key = String((args && args.api_key) || '').trim();
+      const base = String((args && args.base_url) || '').trim();
+      const model = String((args && args.model) || '').trim();
+      const voiceFix = args && args.voice_fix !== undefined ? !!args.voice_fix : undefined;
+      if (!key && !base && !model && voiceFix === undefined) return { error: '请至少提供一项要修改的配置（api_key / base_url / model / voice_fix）' };
+      if (model && !['deepseek-v4-flash', 'deepseek-v4-pro'].includes(model)) return { error: '模型无效，可选 deepseek-v4-flash / deepseek-v4-pro' };
+      const changed = [];
+      if (key) { agentCfg.apiKey = key; changed.push('api_key'); }
+      if (base) { agentCfg.baseUrl = base; changed.push('base_url'); }
+      if (model) { agentCfg.model = model; changed.push('model'); }
+      if (voiceFix !== undefined) { agentCfg.voiceFix = voiceFix; changed.push('voice_fix'); }
+      save(LS.agent, agentCfg);
+      renderAgentApiForm();
+      renderSettingsStatus();
+      return {
+        ok: true, changed,
+        keyMasked: agentCfg.apiKey ? (agentCfg.apiKey.slice(0, 6) + '…' + agentCfg.apiKey.slice(-4)) : '',
+        baseUrl: agentCfg.baseUrl, model: agentCfg.model, voiceFix: agentCfg.voiceFix,
+        note: '智能体接口配置已更新（新对话生效）；Key 仅保存在本机浏览器，不会上传',
+      };
+    }
+    case 'set_map_api': {
+      const key = String((args && args.api_key) || '').trim();
+      const sec = String((args && args.security_code) || '').trim();
+      const doTest = args && args.test === true;
+      if (!key) return { error: '请提供高德地图 api_key' };
+      mapCfg = { key, securityCode: sec };
+      save(LS.map, mapCfg);
+      renderMapApiForm();
+      renderSettingsStatus();
+      let testNote = '';
+      if (doTest) {
+        try {
+          const r = await amapGet('ip', {});
+          testNote = r.status === '1' ? 'IP 定位接口测试通过；' : ('测试失败：' + (r.error || r.info || '未知错误') + '；');
+        } catch (e) {
+          testNote = '测试失败：' + (e.message || e) + '；';
+        }
+      }
+      const refreshNote = window.AMap ? '地图 SDK 已加载，需刷新页面（Ctrl+F5）后新 Key 生效。' : '';
+      return {
+        ok: true,
+        keyMasked: key.slice(0, 4) + '…' + key.slice(-4),
+        note: testNote + '高德地图配置已保存（Key 仅存本机浏览器）。' + refreshNote,
+      };
+    }
+    case 'test_agent_api': {
+      const cfg = {
+        apiKey: String((args && args.api_key) || '').trim() || agentCfg.apiKey,
+        baseUrl: String((args && args.base_url) || '').trim() || agentCfg.baseUrl,
+        model: String((args && args.model) || '').trim() || agentCfg.model,
+      };
+      const r = await testAgentApiCore(cfg);
+      if (!r.ok) return { error: r.error };
+      return r;
+    }
     case 'show_page': {
       const page = args && args.page;
-      if (['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper'].includes(page)) { switchPage(page); return { ok: true, page }; }
+      if (['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper', 'settings'].includes(page)) { switchPage(page); return { ok: true, page }; }
       return { error: '无效页面' };
     }
     case 'map_locate': {
-      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户到「设置」页填写并测试' };
       const r = await amapGet('ip', {});
       if (r.status !== '1') return { error: r.error || r.info || 'IP 定位失败' };
       const [a, b] = (r.rectangle || '').split(';').map(s => s.split(',').map(Number));
@@ -4682,7 +4848,7 @@ async function executeTool(name, args) {
     case 'map_search': {
       const kw = String((args && args.keyword) || '').trim();
       if (!kw) return { error: '请提供搜索关键词' };
-      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户到「设置」页填写并测试' };
       const r = await amapGet('place/text', { keywords: kw, offset: 10, page: 1, extensions: 'base' });
       if (r.status !== '1') return { error: r.error || r.info || 'POI 搜索失败' };
       const pois = r.pois || [];
@@ -4702,7 +4868,7 @@ async function executeTool(name, args) {
     case 'map_geocode': {
       const addr = String((args && args.address) || '').trim();
       if (!addr) return { error: '请提供地址' };
-      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户到「设置」页填写并测试' };
       const r = await amapGet('geocode/geo', { address: addr });
       if (r.status !== '1' || !r.geocodes || !r.geocodes.length) return { error: r.error || r.info || '未找到该地址' };
       const g = r.geocodes[0];
@@ -4715,7 +4881,7 @@ async function executeTool(name, args) {
       return { ok: true, address: g.formatted_address, location: g.location, lng: ll[0], lat: ll[1], level: g.level, province: g.province, city: g.city, adcode: g.adcode };
     }
     case 'map_route': {
-      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户到「设置」页填写并测试' };
       const oText = String((args && args.origin) || '').trim();
       const dText = String((args && args.destination) || '').trim();
       const mode = ['driving', 'walking', 'bicycling', 'metro', 'transit'].includes(args && args.mode) ? args.mode : 'driving';
@@ -4737,7 +4903,7 @@ async function executeTool(name, args) {
       };
     }
     case 'map_ranging': {
-      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户到「设置」页填写并测试' };
       const action = args && args.action;
       switchPage('map');
       if (action === 'stop') {
@@ -4773,7 +4939,7 @@ async function executeTool(name, args) {
       return { ok: true, removed: f.name };
     }
     case 'start_fence_draw': {
-      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户在地图页「⚙️ Key 配置」填写并测试' };
+      if (!mapCfg.key) return { error: '未配置高德 API Key，请提醒用户到「设置」页填写并测试' };
       switchPage('map');
       openFenceModal();
       const type = (args && args.type) === 'circle' ? 'circle' : 'polygon';
@@ -5099,6 +5265,8 @@ async function executeTool(name, args) {
         pendingTaskCount: tasks.filter(t => !t.done).length,
         eventCount: events.length,
         mapConfigured: !!mapCfg.key,
+        agentConfigured: !!agentCfg.apiKey,
+        theme,
         sectionTimesConfigured: (settings.secTimes || []).filter(Boolean).length,
       };
     default:
@@ -5117,9 +5285,10 @@ function buildSystemPrompt() {
 【专注页】番茄钟专注计时：开始专注（focus_start，可关联规划事件、自定义分钟数）；结束当前专注并记录（focus_stop）；查询进行中状态与今日/本周/累计统计、按规划事件投入（focus_status）。专注倒计时结束后自动记录并进入休息，跨页面持续运行。
 【待办页】查询/添加/完成/删除待办任务（按截止时间优先度排序；截止前1小时会自动通过「提醒」栏目提醒用户，红色圆圈角标提示新提醒）。
 【规划页】查询/添加/编辑/删除未来规划事件（甘特图显示，任务名称-开始日期-结束日期；日期格式 YYYY-MM-DD）。
-【地图页】定位当前城市（map_locate，高德IP定位）；搜索地点（map_search，POI搜索）；地址转经纬度（map_geocode，地理编码）；路径规划（map_route，驾车/步行/骑行/地铁/混合）；开启测距（map_ranging）；电子围栏管理（list_fences/locate_fence/delete_fence/start_fence_draw）；切换全屏（map_fullscreen）。需用户已在地图页「⚙️ Key 配置」填写高德 Key 并通过测试，否则提醒用户先配置。
+【地图页】定位当前城市（map_locate，高德IP定位）；搜索地点（map_search，POI搜索）；地址转经纬度（map_geocode，地理编码）；路径规划（map_route，驾车/步行/骑行/地铁/混合）；开启测距（map_ranging）；电子围栏管理（list_fences/locate_fence/delete_fence/start_fence_draw）；切换全屏（map_fullscreen）。需用户已在「设置」页配置高德地图 Key 并通过测试，否则提醒用户先配置。
 【多开器】同时打开多个网址分屏显示（multi_open，urls 1-4 个，layout 1/2/4）；查看分屏状态与网址组（multi_list）；保存当前分屏为网址组（multi_save_group）；加载网址组（multi_load_group）；将某一屏放大独占工作区（multi_expand，index 1-4）。注意：部分网站通过 X-Frame-Options/CSP 禁止被内嵌，iframe 会显示空白或拒绝连接，这是网站自身限制。
 【论文页】论文撰写：读取当前论文内容/字数/格式（paper_get）；向论文文本框追加文本（paper_append，自动另起一行）；设置字号磅值与字体（paper_set_font，Word 兼容：12=小四、10.5=五号、14=四号；宋体/黑体/楷体/仿宋/微软雅黑/Times New Roman/Arial/Calibri 等）；清空论文内容（paper_clear，慎用）。论文页支持 Alt+V 语音听写，文字直接插入光标处，与智能体语音互不干扰。
+【设置】智能体 API（DeepSeek）与高德地图 API 的配置都在「设置」页（show_page 传 settings）。智能体可直接操作设置：切换主题皮肤（set_theme，9 套：indigo/blue/teal/green/violet/rose/orange/slate/dark 或中文名）；修改 DeepSeek 接口配置（set_agent_api：api_key/base_url/model/voice_fix，至少一项）；测试接口连通性（test_agent_api：用已保存配置或临时参数发最小请求验证 Key 可用）；修改高德地图配置（set_map_api：api_key 必填、security_code 可选、test 可立即测试）。接口未配置时（智能体报「未配置 API Key」、地图报「未配置高德 API Key」），提醒用户到「设置」页填写并保存。注意：API Key 属敏感信息——只在用户明确要求时写入配置，写入后回复中不要完整复述 Key（用掩码），也不要未经确认修改用户已有的 Key。
 【通用】切换页面(show_page)；读取看板设置与统计(get_settings)。
 今天日期：${dateStr(new Date())}，${WEEKDAYS[wi.weekday - 1]}，${wkTxt}。
 规则：
@@ -5159,7 +5328,7 @@ function appendMsg(role, content, isHtml = false) {
 }
 
 /* ==================== 对话会话管理 ==================== */
-const WELCOME_AI = '你好！我是你的看板智能助手 🤖<br>我可以帮你：查看今天/某一周的课程、搜索并打开收藏网站、添加课程或收藏、给网站分类等。先在右侧配置 DeepSeek API Key，然后直接告诉我想做什么吧～';
+const WELCOME_AI = '你好！我是你的看板智能助手<br>我可以帮你：查看今天/某一周的课程、搜索并打开收藏网站、添加课程或收藏、给网站分类等。先在「设置」页配置 DeepSeek API Key，然后直接告诉我想做什么吧～';
 
 function titleFrom(t) {
   const x = String(t || '').trim().replace(/\s+/g, ' ');
@@ -5245,7 +5414,7 @@ async function runAgentLoop(history) {
       });
     } catch (err) {
       throw new Error('网络请求失败：' + (err.message || err) +
-        '。若是跨域(CORS)问题，可在右侧配置一个代理地址（如本地代理），或检查网络。');
+        '。若是跨域(CORS)问题，可在「设置」页配置一个代理地址（如本地代理），或检查网络。');
     }
     if (!resp.ok) {
       const t = (await resp.text()).slice(0, 400);
@@ -5262,7 +5431,7 @@ async function runAgentLoop(history) {
 
     if (msg.tool_calls && msg.tool_calls.length) {
       for (const tc of msg.tool_calls) {
-        appendMsg('sys', '🛠️ 正在执行：' + (TOOL_LABELS[tc.function.name] || tc.function.name) + '…');
+        appendMsg('sys', '正在执行：' + (TOOL_LABELS[tc.function.name] || tc.function.name) + '…');
         let result;
         try {
           const args = JSON.parse(tc.function.arguments || '{}');
@@ -5284,13 +5453,13 @@ async function sendChat(text) {
   text = (text || '').trim();
   if (!text) return;
   if (sending) return;
-  if (!agentCfg.apiKey) { toast('请先在右侧配置 DeepSeek API Key', 'warn'); return; }
+  if (!agentCfg.apiKey) { toast('请先到「设置」页配置 DeepSeek API Key', 'warn'); return; }
   sending = true;
   $('#btn-chat-send').textContent = '发送中…';
   $('#chat-input').value = ''; // 发送后清空输入栏
   appendMsg('user', text);
   const history = [...chatHistory, { role: 'user', content: text }];
-  const thinking = appendMsg('sys', '🤔 思考中…');
+  const thinking = appendMsg('sys', '思考中…');
   try {
     const { messages, content } = await runAgentLoop(history);
     chatHistory = messages;
@@ -5299,11 +5468,11 @@ async function sendChat(text) {
   } catch (err) {
     chatHistory = history;
     thinking.remove();
-    appendMsg('sys', '❌ ' + (err.message || err));
+    appendMsg('sys', (err.message || err));
   }
   persistSession(text);
   sending = false;
-  $('#btn-chat-send').textContent = '发送 ➤';
+  $('#btn-chat-send').textContent = '发送';
 }
 
 /* ==================== 语音识别（Web Speech API） ==================== */
@@ -5319,7 +5488,7 @@ function resetVoiceUI() {
   const btn = $('#btn-voice');
   if (btn) {
     btn.classList.remove('listening');
-    btn.textContent = '🎤';
+    btn.textContent = '语音';
   }
 }
 function stopVoice() {
@@ -5343,7 +5512,7 @@ function toggleVoice() {
   recognition.onstart = () => {
     recognizing = true;
     btn.classList.add('listening');
-    btn.textContent = '🔴 聆听中';
+    btn.textContent = '聆听中';
   };
   recognition.onresult = e => {
     let interim = '', finalText = '';
@@ -5420,7 +5589,7 @@ async function sendVoiceText(text) {
 /* ==================== 页面切换 ==================== */
 function switchPage(page) {
   $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === page));
-  ['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper'].forEach(p => {
+  ['agent', 'usage', 'schedule', 'bookmarks', 'focus', 'tasks', 'gantt', 'map', 'multi', 'paper', 'settings'].forEach(p => {
     $('#page-' + p).classList.toggle('hidden', p !== page);
   });
   if (page === 'bookmarks') renderBookmarks();
@@ -5431,6 +5600,7 @@ function switchPage(page) {
   if (page === 'multi') renderMulti();
   if (page === 'focus') renderFocus();
   if (page === 'paper') renderPaper();
+  if (page === 'settings') { renderThemes(); renderSettingsStatus(); }
   if (page === 'schedule') renderAll();
 }
 
@@ -5438,6 +5608,15 @@ function switchPage(page) {
 function bindAll() {
   // 导航
   $$('.nav-item').forEach(b => b.addEventListener('click', () => switchPage(b.dataset.page)));
+
+  // 设置页：主题皮肤切换
+  $('#theme-grid').addEventListener('click', e => {
+    const c = e.target.closest('[data-theme]');
+    if (!c) return;
+    const t = THEMES.find(x => x.id === c.dataset.theme);
+    applyTheme(c.dataset.theme);
+    if (t) toast('已切换主题：' + t.name);
+  });
 
   // 番茄钟专注
   $('#btn-focus-toggle').addEventListener('click', () => {
@@ -5447,7 +5626,7 @@ function bindAll() {
       const ev = events.find(x => x.id === sel.value);
       focusStart('focus', ev ? { eventId: ev.id, eventName: ev.name } : {});
       focusBeep(1);
-      toast(`🍅 专注开始，${Math.round(focusData.timer.totalSec / 60)} 分钟${ev ? ' · ' + ev.name : ''}`);
+      toast(`专注开始，${Math.round(focusData.timer.totalSec / 60)} 分钟${ev ? ' · ' + ev.name : ''}`);
     } else if (t.running) focusPause();
     else focusResume();
   });
@@ -5791,7 +5970,7 @@ function bindAll() {
     if (t.done) t.reminded = true;
     save(LS.tasks, tasks);
     renderTasks();
-    toast(t.done ? `已完成「${t.title}」🎉` : '已恢复为待办');
+    toast(t.done ? `已完成「${t.title}」` : '已恢复为待办');
   });
 
   // 聊天标签页（对话 / 提醒）
@@ -5877,7 +6056,7 @@ function bindAll() {
   // 全屏状态变化时更新按钮文字并重绘地图
   document.addEventListener('fullscreenchange', () => {
     const btn = $('#btn-map-full');
-    if (btn) btn.textContent = document.fullscreenElement ? '⛶ 退出全屏' : '⛶ 全屏';
+    if (btn) btn.textContent = document.fullscreenElement ? '退出全屏' : '全屏';
     setTimeout(() => { if (amapMap) amapMap.resize(); }, 150);
   });
   $('#map-container').addEventListener('click', e => {
@@ -6108,7 +6287,7 @@ function bindAll() {
   $('#btn-multi-popall').addEventListener('click', popMultiAll);
   document.addEventListener('fullscreenchange', () => {
     const btn = $('#btn-multi-full');
-    if (btn) btn.textContent = document.fullscreenElement === $('#page-multi') ? '⛶ 退出全屏' : '⛶ 全屏';
+    if (btn) btn.textContent = document.fullscreenElement === $('#page-multi') ? '退出全屏' : '全屏';
   });
   $('#multi-grid').addEventListener('click', e => {
     const btn = e.target.closest('[data-act]');
@@ -6145,7 +6324,13 @@ function bindAll() {
       voiceFix: $('#ag-voicefix').checked,
     };
     save(LS.agent, agentCfg);
+    renderSettingsStatus();
     toast('配置已保存');
+  });
+  $('#btn-agent-test').addEventListener('click', async () => {
+    const r = await testAgentApiFromForm();
+    if (r.ok) toast(r.note);
+    else toast(r.error, 'warn');
   });
   $('#btn-chat-send').addEventListener('click', () => sendChat($('#chat-input').value));
   $('#btn-voice').addEventListener('click', toggleVoice);
@@ -6221,6 +6406,8 @@ function renderAll() {
   renderMulti();
   renderFocus();
   renderPaper();
+  renderThemes();
+  renderSettingsStatus();
   updateRemindBadge();
   renderReminders();
   updateBanner();
@@ -6228,6 +6415,8 @@ function renderAll() {
 
 /* ==================== 初始化 ==================== */
 document.addEventListener('DOMContentLoaded', () => {
+  // 应用已保存的主题皮肤
+  document.documentElement.setAttribute('data-theme', theme);
   // 回填设置
   $('#semester-start').value = settings.semesterStart;
   $('#max-sec').value = settings.maxSection;
@@ -6235,6 +6424,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#ag-base').value = agentCfg.baseUrl;
   $('#ag-model').value = agentCfg.model;
   $('#ag-voicefix').checked = agentCfg.voiceFix !== false;
+  $('#map-key').value = mapCfg.key || '';
+  $('#map-sec').value = mapCfg.securityCode || '';
   $('#gt-zoom').value = settings.ganttZoom || 16;
 
   bindAll();
